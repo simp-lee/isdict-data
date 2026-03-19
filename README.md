@@ -200,6 +200,17 @@ phrases, err := svc.SearchPhrases(ctx, "look", 10)
 - `SuggestWords`: 前缀最少 3 个规范化字符、最多 50 个裁剪后字符；`limit <= 0` 时默认 `10`，并受 `ServiceConfig.SuggestMaxLimit` 限制
 - `SearchPhrases`: 关键字最少 1 个字符、最多 50 个字符；`limit <= 0` 时默认 `10`，最大固定为 `50`
 
+## 返回字段说明
+
+词条相关响应中的注解字段直接复用 `isdict-commons/model.WordAnnotations`。其中 `school_level` 为整型透传字段，当前约定如下：
+
+- `0`: unknown
+- `1`: 初中
+- `2`: 高中
+- `3`: 大学
+
+`isdict-data` 当前不会把 `school_level` 转换为中文名称，而是按上游模型定义原样透传整数值，方便消费端自行决定展示方式。
+
 ## 错误语义
 
 模块统一使用仓储层哨兵错误作为 not-found 来源，service 层只做重导出，不再做二次翻译。

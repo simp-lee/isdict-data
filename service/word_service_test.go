@@ -1017,6 +1017,141 @@ func TestGetWordByHeadword_MapsWordAndSenseCEFRLevels(t *testing.T) {
 	}
 }
 
+func TestSchoolLevel_PassthroughAcrossResponses(t *testing.T) {
+	cfg := createTestConfig()
+
+	tests := []struct {
+		name string
+		run  func(*testing.T, ServiceConfig)
+	}{
+		{name: "GetWordByHeadword", run: runSchoolLevelGetWordByHeadword},
+		{name: "GetWordsByVariant", run: runSchoolLevelGetWordsByVariant},
+		{name: "SearchWords", run: runSchoolLevelSearchWords},
+		{name: "SuggestWords", run: runSchoolLevelSuggestWords},
+		{name: "SearchPhrases", run: runSchoolLevelSearchPhrases},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.run(t, cfg)
+		})
+	}
+}
+
+func runSchoolLevelGetWordByHeadword(t *testing.T, cfg ServiceConfig) {
+	service := NewWordService(&mockRepository{
+		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
+			return &repository.Word{
+				ID:          1,
+				Headword:    headword,
+				SchoolLevel: 3,
+			}, nil, nil
+		},
+	}, cfg)
+
+	result, err := service.GetWordByHeadword(context.Background(), "learn", nil, false, false, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if result.SchoolLevel != 3 {
+		t.Fatalf("Expected SchoolLevel 3, got %d", result.SchoolLevel)
+	}
+}
+
+func runSchoolLevelGetWordsByVariant(t *testing.T, cfg ServiceConfig) {
+	service := NewWordService(&mockRepository{
+		getWordsByVariantFunc: func(_ context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
+			return []repository.Word{{
+					ID:          1,
+					Headword:    "learn",
+					SchoolLevel: 2,
+				}}, []repository.WordVariant{{
+					WordID:      1,
+					VariantText: variant,
+				}}, nil
+		},
+	}, cfg)
+
+	results, err := service.GetWordsByVariant(context.Background(), "learnt", nil, false, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+	if results[0].SchoolLevel != 2 {
+		t.Fatalf("Expected SchoolLevel 2, got %d", results[0].SchoolLevel)
+	}
+}
+
+func runSchoolLevelSearchWords(t *testing.T, cfg ServiceConfig) {
+	service := NewWordService(&mockRepository{
+		searchWordsFunc: func(_ context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+			return []repository.Word{{
+				ID:          1,
+				Headword:    keyword,
+				SchoolLevel: 1,
+				Senses:      []repository.Sense{{POS: 1}},
+			}}, 1, nil
+		},
+	}, cfg)
+
+	results, _, err := service.SearchWords(context.Background(), "learn", nil, nil, nil, nil, nil, nil, 20, 0)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+	if results[0].SchoolLevel != 1 {
+		t.Fatalf("Expected SchoolLevel 1, got %d", results[0].SchoolLevel)
+	}
+}
+
+func runSchoolLevelSuggestWords(t *testing.T, cfg ServiceConfig) {
+	service := NewWordService(&mockRepository{
+		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
+			return []repository.Word{{
+				Headword:    prefix,
+				SchoolLevel: 2,
+			}}, nil
+		},
+	}, cfg)
+
+	results, err := service.SuggestWords(context.Background(), "lea", nil, nil, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+	if results[0].SchoolLevel != 2 {
+		t.Fatalf("Expected SchoolLevel 2, got %d", results[0].SchoolLevel)
+	}
+}
+
+func runSchoolLevelSearchPhrases(t *testing.T, cfg ServiceConfig) {
+	service := NewWordService(&mockRepository{
+		searchPhrasesFunc: func(_ context.Context, keyword string, limit int) ([]repository.Word, error) {
+			return []repository.Word{{
+				Headword:    keyword + " up",
+				SchoolLevel: 3,
+			}}, nil
+		},
+	}, cfg)
+
+	results, err := service.SearchPhrases(context.Background(), "look", 10)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+	if results[0].SchoolLevel != 3 {
+		t.Fatalf("Expected SchoolLevel 3, got %d", results[0].SchoolLevel)
+	}
+}
+
 func intPtr(v int) *int {
 	return &v
 }
