@@ -15,15 +15,16 @@ import (
 
 // mockRepository is a mock implementation of the WordRepository interface
 type mockRepository struct {
-	getWordByHeadwordFunc         func(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*model.Word, *model.WordVariant, error)
-	getWordsByHeadwordsFunc       func(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error)
-	getWordsByVariantsFunc        func(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error)
-	getWordsByVariantFunc         func(ctx context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error)
-	searchWordsFunc               func(ctx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.Word, int64, error)
-	suggestWordsFunc              func(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]model.Word, error)
-	searchPhrasesFunc             func(ctx context.Context, keyword string, limit int) ([]model.Word, error)
-	getPronunciationsByWordIDFunc func(ctx context.Context, wordID uint, accent *int) ([]model.Pronunciation, error)
-	getSensesByWordIDFunc         func(ctx context.Context, wordID uint, pos *int) ([]model.Sense, error)
+	getWordByHeadwordFunc          func(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*model.Word, *model.WordVariant, error)
+	getWordsByHeadwordsFunc        func(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error)
+	getWordsByVariantsFunc         func(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error)
+	getWordsByVariantFunc          func(ctx context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error)
+	listSlugBootstrapHeadwordsFunc func(ctx context.Context) ([]string, error)
+	searchWordsFunc                func(ctx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.Word, int64, error)
+	suggestWordsFunc               func(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]model.Word, error)
+	searchPhrasesFunc              func(ctx context.Context, keyword string, limit int) ([]model.Word, error)
+	getPronunciationsByWordIDFunc  func(ctx context.Context, wordID uint, accent *int) ([]model.Pronunciation, error)
+	getSensesByWordIDFunc          func(ctx context.Context, wordID uint, pos *int) ([]model.Sense, error)
 }
 
 func (m *mockRepository) GetWordByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*model.Word, *model.WordVariant, error) {
@@ -52,6 +53,13 @@ func (m *mockRepository) GetWordsByVariant(ctx context.Context, variant string, 
 		return m.getWordsByVariantFunc(ctx, variant, kind, includePronunciations, includeSenses)
 	}
 	return nil, nil, repository.ErrVariantNotFound
+}
+
+func (m *mockRepository) ListSlugBootstrapHeadwords(ctx context.Context) ([]string, error) {
+	if m.listSlugBootstrapHeadwordsFunc != nil {
+		return m.listSlugBootstrapHeadwordsFunc(ctx)
+	}
+	return []string{}, nil
 }
 
 func (m *mockRepository) SearchWords(ctx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.Word, int64, error) {

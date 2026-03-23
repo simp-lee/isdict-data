@@ -292,6 +292,24 @@ func (r *Repository) GetWordsByHeadwords(ctx context.Context, headwords []string
 	return words, nil
 }
 
+// ListSlugBootstrapHeadwords returns the canonical headwords used to build a
+// slug index during application startup.
+func (r *Repository) ListSlugBootstrapHeadwords(ctx context.Context) ([]string, error) {
+	db, err := r.dbWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	headwords := make([]string, 0)
+	if err := db.Model(&Word{}).
+		Order("headword ASC").
+		Pluck("headword", &headwords).Error; err != nil {
+		return nil, err
+	}
+
+	return headwords, nil
+}
+
 // escapeLikePattern escapes SQL LIKE wildcard characters to prevent user input from being interpreted as wildcards
 func escapeLikePattern(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\") // Must be first to avoid double-escaping

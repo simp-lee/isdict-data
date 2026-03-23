@@ -34,6 +34,10 @@ func (repositoryContractStub) GetWordsByVariant(context.Context, string, *int, b
 	return nil, nil, nil
 }
 
+func (repositoryContractStub) ListSlugBootstrapHeadwords(context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func (repositoryContractStub) SearchWords(context.Context, string, *int, *int, *int, *int, *int, *int, int, int) ([]model.Word, int64, error) {
 	return nil, 0, nil
 }
@@ -56,7 +60,7 @@ func (repositoryContractStub) GetSensesByWordID(context.Context, uint, *int) ([]
 
 var _ WordRepository = (*repositoryContractStub)(nil)
 
-// AC-1: 导出 repository.WordRepository 接口，保持 9 个方法签名与当前契约一致
+// AC-1: 导出 repository.WordRepository 接口，保持 10 个方法签名与当前契约一致
 func TestRepository_WordRepositoryContractCompile(t *testing.T) {
 	t.Helper()
 
@@ -66,6 +70,7 @@ func TestRepository_WordRepositoryContractCompile(t *testing.T) {
 		"GetWordsByHeadwords",
 		"GetWordsByVariants",
 		"GetWordsByVariant",
+		"ListSlugBootstrapHeadwords",
 		"SearchWords",
 		"SuggestWords",
 		"SearchPhrases",

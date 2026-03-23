@@ -30,6 +30,9 @@ type WordRepository interface {
 	// matched by errors.Is(err, ErrVariantNotFound), when no variant matches the
 	// requested input.
 	GetWordsByVariant(ctx context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error)
+	// ListSlugBootstrapHeadwords returns the canonical headwords needed to build
+	// a slug index during process startup.
+	ListSlugBootstrapHeadwords(ctx context.Context) ([]string, error)
 	SearchWords(ctx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.Word, int64, error)
 	SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]model.Word, error)
 	SearchPhrases(ctx context.Context, keyword string, limit int) ([]model.Word, error)

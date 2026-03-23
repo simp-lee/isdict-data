@@ -57,6 +57,57 @@ func TestGetWordsByHeadwords_PropagatesDeadlineToDB(t *testing.T) {
 	}
 }
 
+func TestListSlugBootstrapHeadwords_ReturnsCanonicalHeadwords(t *testing.T) {
+	repo, mock := newMockRepository(t)
+
+	mock.ExpectQuery(`SELECT "headword" FROM "words" ORDER BY headword ASC`).
+		WillReturnRows(sqlmock.NewRows([]string{"headword"}).
+			AddRow("alpha").
+			AddRow("go after"))
+
+	headwords, err := repo.ListSlugBootstrapHeadwords(context.Background())
+	if err != nil {
+		t.Fatalf("ListSlugBootstrapHeadwords() error = %v", err)
+	}
+	if len(headwords) != 2 {
+		t.Fatalf("len(headwords) = %d, want %d", len(headwords), 2)
+	}
+	if headwords[0] != "alpha" || headwords[1] != "go after" {
+		t.Fatalf("headwords = %#v, want %#v", headwords, []string{"alpha", "go after"})
+	}
+}
+
+func TestListSlugBootstrapHeadwords_ReturnsEmptySliceWhenNoRows(t *testing.T) {
+	repo, mock := newMockRepository(t)
+
+	mock.ExpectQuery(`SELECT "headword" FROM "words" ORDER BY headword ASC`).
+		WillReturnRows(sqlmock.NewRows([]string{"headword"}))
+
+	headwords, err := repo.ListSlugBootstrapHeadwords(context.Background())
+	if err != nil {
+		t.Fatalf("ListSlugBootstrapHeadwords() error = %v", err)
+	}
+	if len(headwords) != 0 {
+		t.Fatalf("len(headwords) = %d, want %d", len(headwords), 0)
+	}
+	if headwords == nil {
+		t.Fatal("expected empty slice, got nil")
+	}
+}
+
+func TestListSlugBootstrapHeadwords_PropagatesDatabaseError(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	wantErr := errors.New("db unavailable")
+
+	mock.ExpectQuery(`SELECT "headword" FROM "words" ORDER BY headword ASC`).
+		WillReturnError(wantErr)
+
+	_, err := repo.ListSlugBootstrapHeadwords(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ListSlugBootstrapHeadwords() error = %v, want %v", err, wantErr)
+	}
+}
+
 func TestSuggestWords_PropagatesDeadlineToRawQuery(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)

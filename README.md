@@ -17,13 +17,14 @@
 
 负责词典数据读取与查询实现。
 
-- 导出 `WordRepository` 接口，包含 9 个数据访问方法。
+- 导出 `WordRepository` 接口，包含 10 个数据访问方法。
 - 导出 `NewRepository(db *gorm.DB) *Repository`。
 - 导出 `BatchVariantMatch`、`ErrWordNotFound`、`ErrVariantNotFound`。
 - 保持现有查询行为，包括：
   - `GetWordByHeadword` 的精确匹配、规范化匹配、变体回退链路。
   - `SearchWords`、`SuggestWords`、`SearchPhrases` 的匹配优先级与稳定排序。
   - 基于 PostgreSQL `pg_trgm` 扩展的模糊搜索能力。
+  - `ListSlugBootstrapHeadwords` 用于 web 启动期一次性枚举 canonical headword，构建 slug 索引。
 
 ### `service`
 
@@ -153,6 +154,21 @@ func main() {
 如果你的应用已经自己管理连接生命周期，不需要像示例那样在 `main` 中关闭 `sql.DB`。
 
 ## 常见调用方式
+
+### 启动期 slug bootstrap
+
+```go
+headwords, err := repo.ListSlugBootstrapHeadwords(ctx)
+if err != nil {
+	panic(err)
+}
+
+for _, headword := range headwords {
+	// 将 canonical headword 交给应用侧 slug builder 建索引
+}
+```
+
+这个能力的用途仅限于 web 启动期 slug bootstrap。消费端不需要直接读取 `words` 表，也不需要知道底层 SQL 或 GORM 查询细节。
 
 ### 获取单个词条
 

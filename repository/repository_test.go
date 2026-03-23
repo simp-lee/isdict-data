@@ -44,6 +44,13 @@ func TestRepository_NilDBGuard(t *testing.T) {
 			},
 		},
 		{
+			name: "ListSlugBootstrapHeadwords",
+			run: func() error {
+				_, err := repo.ListSlugBootstrapHeadwords(ctx)
+				return err
+			},
+		},
+		{
 			name: "SearchWords",
 			run: func() error {
 				_, _, err := repo.SearchWords(ctx, "word", nil, nil, nil, nil, nil, nil, 10, 0)
