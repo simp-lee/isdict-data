@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/simp-lee/isdict-commons/model"
 	"github.com/simp-lee/isdict-commons/textutil"
@@ -14,8 +15,12 @@ import (
 
 // WordService handles business logic for word operations
 type WordService struct {
-	repo   repository.WordRepository
-	config ServiceConfig
+	repo    repository.WordRepository
+	config  ServiceConfig
+	shuffle func([]string)
+
+	featuredCandidatesMu sync.RWMutex
+	featuredCandidates   featuredCandidateCache
 }
 
 // Domain-level errors produced by the service layer
@@ -47,8 +52,9 @@ type batchIncludeOptions struct {
 // NewWordService creates a new word service instance
 func NewWordService(repo repository.WordRepository, cfg ServiceConfig) *WordService {
 	return &WordService{
-		repo:   repo,
-		config: normalizeServiceConfig(cfg),
+		repo:    repo,
+		config:  normalizeServiceConfig(cfg),
+		shuffle: defaultFeaturedShuffle,
 	}
 }
 
