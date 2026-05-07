@@ -113,8 +113,8 @@ func TestSuggestWords_PropagatesDeadlineToRawQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	mock.ExpectQuery(`(?s)WITH entry_ranked AS .*FROM entry_search_terms t.*SELECT id, frequency_rank.*LIMIT \$3`).
-		WithArgs("air", "ais", 5).
+	mock.ExpectQuery(`(?s)WITH params AS .*entry_ranked AS .*FROM entry_search_terms t.*SELECT id, frequency_rank.*LIMIT \$4`).
+		WithArgs("air", "air", "ais", 5).
 		WillDelayFor(50 * time.Millisecond).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "frequency_rank"}))
 

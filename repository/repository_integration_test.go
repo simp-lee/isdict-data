@@ -272,7 +272,7 @@ func TestRepository_PostgresSuggestWordsDeduplicatesCanonicalHeadwords(t *testin
 	if err != nil {
 		t.Fatalf("SuggestWords(mov, limit 5) error = %v", err)
 	}
-	if got, want := strings.Join(suggestionHeadwords(withFallback), ","), "move,moving,moved,motion,mover"; got != want {
+	if got, want := strings.Join(suggestionHeadwords(withFallback), ","), "move,moving,moved,mover,motion"; got != want {
 		t.Fatalf("SuggestWords(mov, limit 5) headwords = %s, want %s", got, want)
 	}
 
@@ -282,6 +282,77 @@ func TestRepository_PostgresSuggestWordsDeduplicatesCanonicalHeadwords(t *testin
 	}
 	if len(aliasSuggestions) != 1 || aliasSuggestions[0].Headword != "motion" {
 		t.Fatalf("SuggestWords(alias) = %#v, want canonical headword motion", aliasSuggestions)
+	}
+}
+
+func TestRepository_PostgresSuggestWordsRanksHeadwordPrefixesBeforeFormPrefixes(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedSuggestWordsFixture(t, db, 200, []suggestWordFixtureEntry{
+		{ID: 201, Headword: "when", Pos: commonmodel.POSAdverb, FrequencyRank: 78},
+		{ID: 202, Headword: "die", Pos: commonmodel.POSVerb, FrequencyRank: 358},
+		{ID: 203, Headword: "dick", Pos: commonmodel.POSNoun, FrequencyRank: 1000},
+		{ID: 204, Headword: "dice", Pos: commonmodel.POSNoun, FrequencyRank: 2000},
+		{ID: 205, Headword: "dickhead", Pos: commonmodel.POSNoun, FrequencyRank: 3000},
+		{ID: 206, Headword: "dicks", Pos: commonmodel.POSNoun, FrequencyRank: 4000},
+		{ID: 207, Headword: "dictionary", Pos: commonmodel.POSNoun, FrequencyRank: 5000},
+		{ID: 208, Headword: "dictate", Pos: commonmodel.POSVerb, FrequencyRank: 6000},
+	}, []suggestWordFixtureForm{
+		{ID: 2001, WordID: 201, FormText: "dices", RelationKind: commonmodel.RelationKindForm},
+		{ID: 2002, WordID: 202, FormText: "dice", RelationKind: commonmodel.RelationKindForm},
+	})
+
+	suggestions, err := repo.SuggestWords(context.Background(), "dic", nil, nil, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("SuggestWords(dic) error = %v", err)
+	}
+
+	got := suggestionHeadwords(suggestions)
+	wantPrefix := []string{"dick", "dice", "dickhead", "dicks", "dictionary", "dictate"}
+	if len(got) < len(wantPrefix) {
+		t.Fatalf("SuggestWords(dic) headwords = %s, want at least prefix %s", strings.Join(got, ","), strings.Join(wantPrefix, ","))
+	}
+	for i, want := range wantPrefix {
+		if got[i] != want {
+			t.Fatalf("SuggestWords(dic) headwords = %s, want prefix %s", strings.Join(got, ","), strings.Join(wantPrefix, ","))
+		}
+	}
+	if got[0] == "when" || got[0] == "die" {
+		t.Fatalf("SuggestWords(dic) started with form-only match %q in %s", got[0], strings.Join(got, ","))
+	}
+}
+
+func TestRepository_PostgresSuggestWordsKeepsExactFormMatches(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedSuggestWordsFixture(t, db, 300, []suggestWordFixtureEntry{
+		{ID: 301, Headword: "learn", Pos: commonmodel.POSVerb, FrequencyRank: 700},
+	}, []suggestWordFixtureForm{
+		{ID: 3001, WordID: 301, FormText: "learnt", RelationKind: commonmodel.RelationKindForm},
+	})
+
+	suggestions, err := repo.SuggestWords(context.Background(), "learnt", nil, nil, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("SuggestWords(learnt) error = %v", err)
+	}
+	if len(suggestions) != 1 || suggestions[0].Headword != "learn" {
+		t.Fatalf("SuggestWords(learnt) = %#v, want learn", suggestions)
+	}
+}
+
+func TestRepository_PostgresSuggestWordsRanksExactHeadwordBeforeExactForm(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedSuggestWordsFixture(t, db, 400, []suggestWordFixtureEntry{
+		{ID: 401, Headword: "die", Pos: commonmodel.POSVerb, FrequencyRank: 358},
+		{ID: 402, Headword: "dice", Pos: commonmodel.POSNoun, FrequencyRank: 5000},
+	}, []suggestWordFixtureForm{
+		{ID: 4001, WordID: 401, FormText: "dice", RelationKind: commonmodel.RelationKindForm},
+	})
+
+	suggestions, err := repo.SuggestWords(context.Background(), "dice", nil, nil, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("SuggestWords(dice) error = %v", err)
+	}
+	if got, want := strings.Join(suggestionHeadwords(suggestions), ","), "dice,die"; got != want {
+		t.Fatalf("SuggestWords(dice) headwords = %s, want %s", got, want)
 	}
 }
 
@@ -307,8 +378,34 @@ func newPostgresIntegrationRepository(t *testing.T) (*Repository, *gorm.DB) {
 	if err := migration.RunMigration(db, migration.MigrateOptions{DropTables: true}); err != nil {
 		t.Fatalf("migrate commons v1 schema: %v", err)
 	}
+	allowFixtureIdentityOverrides(t, db)
 
 	return &Repository{db: db}, db
+}
+
+func allowFixtureIdentityOverrides(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	tables := []string{
+		"import_runs",
+		"entries",
+		"senses",
+		"sense_glosses_en",
+		"sense_glosses_zh",
+		"sense_labels",
+		"sense_examples",
+		"pronunciation_ipas",
+		"pronunciation_audios",
+		"entry_forms",
+		"lexical_relations",
+		"entry_summaries_zh",
+		"entry_search_terms",
+	}
+	for _, table := range tables {
+		if err := db.Exec(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN id SET GENERATED BY DEFAULT", table)).Error; err != nil {
+			t.Fatalf("allow fixture identity overrides for %s: %v", table, err)
+		}
+	}
 }
 
 func seedSuggestWordsDuplicateHeadwordFixture(t *testing.T, db *gorm.DB) {
@@ -365,6 +462,73 @@ func seedSuggestWordsDuplicateHeadwordFixture(t *testing.T, db *gorm.DB) {
 		DisplayOrder:    1,
 	}
 	createRows(t, db, &alias)
+
+	if err := migration.RefreshReadModels(db); err != nil {
+		t.Fatalf("refresh suggest read models: %v", err)
+	}
+}
+
+type suggestWordFixtureEntry struct {
+	ID            int64
+	Headword      string
+	Pos           string
+	FrequencyRank int
+}
+
+type suggestWordFixtureForm struct {
+	ID           int64
+	WordID       int64
+	FormText     string
+	RelationKind string
+}
+
+func seedSuggestWordsFixture(t *testing.T, db *gorm.DB, runID int64, entries []suggestWordFixtureEntry, forms []suggestWordFixtureForm) {
+	t.Helper()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	importRun := commonmodel.ImportRun{
+		ID:              runID,
+		SourceName:      "wiktionary",
+		SourcePath:      fmt.Sprintf("/data/suggest-%d.xml", runID),
+		PipelineVersion: "v1",
+		Status:          commonmodel.ImportRunStatusCompleted,
+		StartedAt:       now,
+		FinishedAt:      &now,
+	}
+	createRows(t, db, &importRun)
+
+	for _, spec := range entries {
+		entry := Word{
+			ID:                 spec.ID,
+			Headword:           spec.Headword,
+			NormalizedHeadword: norm.NormalizeHeadword(spec.Headword),
+			Pos:                spec.Pos,
+			SourceRunID:        importRun.ID,
+		}
+		createRows(t, db, &entry)
+		createRows(t, db, &commonmodel.EntryLearningSignal{
+			EntryID:       spec.ID,
+			FrequencyRank: spec.FrequencyRank,
+			UpdatedAt:     now,
+		})
+	}
+
+	for _, spec := range forms {
+		sourceRelations := pq.StringArray{"form_of"}
+		if spec.RelationKind == commonmodel.RelationKindAlias {
+			sourceRelations = pq.StringArray{"alias"}
+		}
+		form := WordVariant{
+			ID:              spec.ID,
+			WordID:          spec.WordID,
+			FormText:        spec.FormText,
+			NormalizedForm:  norm.NormalizeHeadword(spec.FormText),
+			RelationKind:    spec.RelationKind,
+			SourceRelations: sourceRelations,
+			DisplayOrder:    1,
+		}
+		createRows(t, db, &form)
+	}
 
 	if err := migration.RefreshReadModels(db); err != nil {
 		t.Fatalf("refresh suggest read models: %v", err)

@@ -792,22 +792,42 @@ func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilt
 	}
 
 	unionSQL := fmt.Sprintf(`
-		WITH entry_ranked AS (
+		WITH params AS (
+			SELECT ?::text AS normalized_prefix
+		),
+		entry_ranked AS (
 			SELECT
 				t.entry_id AS id,
 				t.headword,
 				LOWER(TRIM(t.headword)) AS headword_key,
+				CASE
+					WHEN t.term_kind = 'headword' THEN 0
+					WHEN t.term_kind = 'alias' AND t.normalized_term = p.normalized_prefix THEN 1
+					WHEN t.term_kind = 'alias' THEN 2
+					WHEN t.term_kind = 'form' AND t.normalized_term = p.normalized_prefix THEN 3
+					WHEN t.term_kind = 'form' THEN 4
+					ELSE 5
+				END AS match_priority,
 				CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS frequency_rank,
 				t.term_rank,
 				ROW_NUMBER() OVER (
 					PARTITION BY t.entry_id
 					ORDER BY
+						CASE
+							WHEN t.term_kind = 'headword' THEN 0
+							WHEN t.term_kind = 'alias' AND t.normalized_term = p.normalized_prefix THEN 1
+							WHEN t.term_kind = 'alias' THEN 2
+							WHEN t.term_kind = 'form' AND t.normalized_term = p.normalized_prefix THEN 3
+							WHEN t.term_kind = 'form' THEN 4
+							ELSE 5
+						END ASC,
 						CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END ASC,
 						t.entry_id ASC,
 						t.term_rank ASC,
 						t.headword ASC
 				) AS entry_rn
 			FROM entry_search_terms t
+			CROSS JOIN params p
 			WHERE %s
 		),
 		headword_ranked AS (
@@ -815,11 +835,13 @@ func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilt
 				id,
 				headword,
 				headword_key,
+				match_priority,
 				frequency_rank,
 				term_rank,
 				ROW_NUMBER() OVER (
 					PARTITION BY headword_key
 					ORDER BY
+						match_priority ASC,
 						frequency_rank ASC,
 						id ASC,
 						term_rank ASC
@@ -830,10 +852,11 @@ func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilt
 		SELECT id, frequency_rank
 		FROM headword_ranked
 		WHERE headword_rn = 1
-		ORDER BY frequency_rank ASC, id ASC
+		ORDER BY match_priority ASC, frequency_rank ASC, id ASC, term_rank ASC, headword ASC
 		LIMIT ?
 		`, strings.Join(clauses, " AND "))
 
+	args = append([]interface{}{normalizedPrefix}, args...)
 	args = append(args, limit)
 	var results []suggestionResultID
 	if err := db.Raw(unionSQL, args...).Scan(&results).Error; err != nil {
