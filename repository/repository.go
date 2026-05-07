@@ -792,24 +792,46 @@ func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilt
 	}
 
 	unionSQL := fmt.Sprintf(`
-		WITH ranked AS (
+		WITH entry_ranked AS (
 			SELECT
 				t.entry_id AS id,
+				t.headword,
+				LOWER(TRIM(t.headword)) AS headword_key,
 				CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS frequency_rank,
+				t.term_rank,
 				ROW_NUMBER() OVER (
 					PARTITION BY t.entry_id
 					ORDER BY
 						CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END ASC,
-						t.entry_id ASC
-				) AS rn
+						t.entry_id ASC,
+						t.term_rank ASC,
+						t.headword ASC
+				) AS entry_rn
 			FROM entry_search_terms t
 			WHERE %s
+		),
+		headword_ranked AS (
+			SELECT
+				id,
+				headword,
+				headword_key,
+				frequency_rank,
+				term_rank,
+				ROW_NUMBER() OVER (
+					PARTITION BY headword_key
+					ORDER BY
+						frequency_rank ASC,
+						id ASC,
+						term_rank ASC
+				) AS headword_rn
+			FROM entry_ranked
+			WHERE entry_rn = 1
 		)
 		SELECT id, frequency_rank
-		FROM ranked
-			WHERE rn = 1
-			ORDER BY frequency_rank ASC, id ASC
-			LIMIT ?
+		FROM headword_ranked
+		WHERE headword_rn = 1
+		ORDER BY frequency_rank ASC, id ASC
+		LIMIT ?
 		`, strings.Join(clauses, " AND "))
 
 	args = append(args, limit)

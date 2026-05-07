@@ -244,6 +244,47 @@ func TestRepository_PostgresCoreQueriesUseCommonsV1Schema(t *testing.T) {
 	}
 }
 
+func TestRepository_PostgresSuggestWordsDeduplicatesCanonicalHeadwords(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedSuggestWordsDuplicateHeadwordFixture(t, db)
+
+	suggestions, err := repo.SuggestWords(context.Background(), "mov", nil, nil, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("SuggestWords(mov) error = %v", err)
+	}
+	assertUniqueSuggestionHeadwords(t, suggestions)
+	assertSuggestionHeadwordCount(t, suggestions, "move", 1)
+	assertSuggestionHeadwordCount(t, suggestions, "moving", 1)
+	assertSuggestionHeadwordCount(t, suggestions, "moved", 1)
+	assertSuggestionRepresentative(t, suggestions, "move", 101)
+	assertSuggestionRepresentative(t, suggestions, "moving", 103)
+	assertSuggestionRepresentative(t, suggestions, "moved", 106)
+
+	limited, err := repo.SuggestWords(context.Background(), "mov", nil, nil, nil, nil, nil, 3)
+	if err != nil {
+		t.Fatalf("SuggestWords(mov, limit 3) error = %v", err)
+	}
+	if got, want := strings.Join(suggestionHeadwords(limited), ","), "move,moving,moved"; got != want {
+		t.Fatalf("SuggestWords(mov, limit 3) headwords = %s, want %s", got, want)
+	}
+
+	withFallback, err := repo.SuggestWords(context.Background(), "mov", nil, nil, nil, nil, nil, 5)
+	if err != nil {
+		t.Fatalf("SuggestWords(mov, limit 5) error = %v", err)
+	}
+	if got, want := strings.Join(suggestionHeadwords(withFallback), ","), "move,moving,moved,motion,mover"; got != want {
+		t.Fatalf("SuggestWords(mov, limit 5) headwords = %s, want %s", got, want)
+	}
+
+	aliasSuggestions, err := repo.SuggestWords(context.Background(), "movt", nil, nil, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("SuggestWords(alias) error = %v", err)
+	}
+	if len(aliasSuggestions) != 1 || aliasSuggestions[0].Headword != "motion" {
+		t.Fatalf("SuggestWords(alias) = %#v, want canonical headword motion", aliasSuggestions)
+	}
+}
+
 func newPostgresIntegrationRepository(t *testing.T) (*Repository, *gorm.DB) {
 	t.Helper()
 
@@ -268,6 +309,66 @@ func newPostgresIntegrationRepository(t *testing.T) (*Repository, *gorm.DB) {
 	}
 
 	return &Repository{db: db}, db
+}
+
+func seedSuggestWordsDuplicateHeadwordFixture(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	importRun := commonmodel.ImportRun{
+		ID:              100,
+		SourceName:      "wiktionary",
+		SourcePath:      "/data/suggest.xml",
+		PipelineVersion: "v1",
+		Status:          commonmodel.ImportRunStatusCompleted,
+		StartedAt:       now,
+		FinishedAt:      &now,
+	}
+	createRows(t, db, &importRun)
+
+	entries := []Word{
+		{ID: 101, Headword: "move", NormalizedHeadword: norm.NormalizeHeadword("move"), Pos: commonmodel.POSVerb, SourceRunID: importRun.ID},
+		{ID: 102, Headword: "move", NormalizedHeadword: norm.NormalizeHeadword("move"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 103, Headword: "moving", NormalizedHeadword: norm.NormalizeHeadword("moving"), Pos: commonmodel.POSAdjective, SourceRunID: importRun.ID},
+		{ID: 104, Headword: "moving", NormalizedHeadword: norm.NormalizeHeadword("moving"), Pos: commonmodel.POSVerb, SourceRunID: importRun.ID},
+		{ID: 105, Headword: "moving", NormalizedHeadword: norm.NormalizeHeadword("moving"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 106, Headword: "moved", NormalizedHeadword: norm.NormalizeHeadword("moved"), Pos: commonmodel.POSAdjective, SourceRunID: importRun.ID},
+		{ID: 107, Headword: "moved", NormalizedHeadword: norm.NormalizeHeadword("moved"), Pos: commonmodel.POSVerb, SourceRunID: importRun.ID},
+		{ID: 108, Headword: "motion", NormalizedHeadword: norm.NormalizeHeadword("motion"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 109, Headword: "mover", NormalizedHeadword: norm.NormalizeHeadword("mover"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+	}
+	for i := range entries {
+		createRows(t, db, &entries[i])
+	}
+
+	signals := []commonmodel.EntryLearningSignal{
+		{EntryID: 101, FrequencyRank: 10, UpdatedAt: now},
+		{EntryID: 102, FrequencyRank: 20, UpdatedAt: now},
+		{EntryID: 103, FrequencyRank: 30, UpdatedAt: now},
+		{EntryID: 104, FrequencyRank: 31, UpdatedAt: now},
+		{EntryID: 105, FrequencyRank: 32, UpdatedAt: now},
+		{EntryID: 106, FrequencyRank: 40, UpdatedAt: now},
+		{EntryID: 107, FrequencyRank: 41, UpdatedAt: now},
+		{EntryID: 108, FrequencyRank: 60, UpdatedAt: now},
+	}
+	for i := range signals {
+		createRows(t, db, &signals[i])
+	}
+
+	alias := WordVariant{
+		ID:              1000,
+		WordID:          108,
+		FormText:        "movt",
+		NormalizedForm:  norm.NormalizeHeadword("movt"),
+		RelationKind:    commonmodel.RelationKindAlias,
+		SourceRelations: pq.StringArray{"alias"},
+		DisplayOrder:    1,
+	}
+	createRows(t, db, &alias)
+
+	if err := migration.RefreshReadModels(db); err != nil {
+		t.Fatalf("refresh suggest read models: %v", err)
+	}
 }
 
 func seedCommonsV1Fixture(t *testing.T, db *gorm.DB) commonsV1Fixture {
@@ -479,6 +580,55 @@ func createRows(t *testing.T, db *gorm.DB, rows ...any) {
 			t.Fatalf("create %T: %v", row, err)
 		}
 	}
+}
+
+func suggestionHeadwords(words []Word) []string {
+	headwords := make([]string, len(words))
+	for i, word := range words {
+		headwords[i] = word.Headword
+	}
+	return headwords
+}
+
+func assertUniqueSuggestionHeadwords(t *testing.T, words []Word) {
+	t.Helper()
+
+	seen := make(map[string]struct{}, len(words))
+	for _, word := range words {
+		key := strings.ToLower(strings.TrimSpace(word.Headword))
+		if _, exists := seen[key]; exists {
+			t.Fatalf("SuggestWords returned duplicate headword %q in %#v", word.Headword, words)
+		}
+		seen[key] = struct{}{}
+	}
+}
+
+func assertSuggestionHeadwordCount(t *testing.T, words []Word, headword string, want int) {
+	t.Helper()
+
+	got := 0
+	for _, word := range words {
+		if word.Headword == headword {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("headword %q count = %d in %#v, want %d", headword, got, words, want)
+	}
+}
+
+func assertSuggestionRepresentative(t *testing.T, words []Word, headword string, wantID int64) {
+	t.Helper()
+
+	for _, word := range words {
+		if word.Headword == headword {
+			if word.ID != wantID {
+				t.Fatalf("headword %q representative ID = %d, want %d", headword, word.ID, wantID)
+			}
+			return
+		}
+	}
+	t.Fatalf("headword %q missing from %#v", headword, words)
 }
 
 func stringPtr(value string) *string {
