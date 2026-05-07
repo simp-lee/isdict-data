@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/simp-lee/isdict-commons/model"
-	"github.com/simp-lee/isdict-commons/textutil"
+	"github.com/simp-lee/isdict-commons/norm"
+	"github.com/simp-lee/isdict-data/repository"
 )
 
 var (
@@ -62,18 +62,18 @@ func wrapFeaturedSourceError(operation string, err error) error {
 //   - ErrFeaturedCandidatesExhausted when the upstream pool cannot satisfy the requested count
 //   - ErrFeaturedBatchIncomplete when hydration cannot return the sampled count or grouping
 //   - ErrFeaturedSourceUnavailable for upstream source failures, preserving the root cause via errors.Is
-func (s *WordService) RandomFeaturedWords(ctx context.Context, limit int) ([]model.SuggestResponse, error) {
+func (s *WordService) RandomFeaturedWords(ctx context.Context, limit int) ([]SuggestResponse, error) {
 	return s.randomFeatured(ctx, limit, false)
 }
 
 // RandomFeaturedPhrases returns exactly limit phrase headwords for the
 // homepage featured module and follows the same error contract as
 // RandomFeaturedWords.
-func (s *WordService) RandomFeaturedPhrases(ctx context.Context, limit int) ([]model.SuggestResponse, error) {
+func (s *WordService) RandomFeaturedPhrases(ctx context.Context, limit int) ([]SuggestResponse, error) {
 	return s.randomFeatured(ctx, limit, true)
 }
 
-func (s *WordService) randomFeatured(ctx context.Context, limit int, phrases bool) ([]model.SuggestResponse, error) {
+func (s *WordService) randomFeatured(ctx context.Context, limit int, phrases bool) ([]SuggestResponse, error) {
 	if limit <= 0 {
 		return nil, ErrFeaturedLimitInvalid
 	}
@@ -93,15 +93,7 @@ func (s *WordService) randomFeatured(ctx context.Context, limit int, phrases boo
 		return nil, fmt.Errorf("%w: requested %d %s, available %d", ErrFeaturedCandidatesExhausted, limit, featuredGroupName(phrases), len(candidates))
 	}
 
-	sampled := append([]string(nil), candidates...)
-	shuffle := s.shuffle
-	if shuffle == nil {
-		shuffle = defaultFeaturedShuffle
-	}
-	shuffle(sampled)
-	sampled = sampled[:limit]
-
-	return s.hydrateFeaturedHeadwords(ctx, sampled, phrases)
+	return s.hydrateFeaturedHeadwords(ctx, sampleFeaturedCandidates(candidates, limit, s.shuffle), phrases)
 }
 
 func (s *WordService) loadFeaturedCandidates(ctx context.Context, phrases bool) ([]string, error) {
@@ -109,23 +101,23 @@ func (s *WordService) loadFeaturedCandidates(ctx context.Context, phrases bool) 
 	if s.featuredCandidates.loaded {
 		candidates := s.featuredCandidates.group(phrases)
 		s.featuredCandidatesMu.RUnlock()
-		return append([]string(nil), candidates...), nil
+		return candidates, nil
 	}
 	s.featuredCandidatesMu.RUnlock()
 
 	s.featuredCandidatesMu.Lock()
 	defer s.featuredCandidatesMu.Unlock()
 	if s.featuredCandidates.loaded {
-		return append([]string(nil), s.featuredCandidates.group(phrases)...), nil
+		return s.featuredCandidates.group(phrases), nil
 	}
 
-	headwords, err := s.repo.ListSlugBootstrapHeadwords(ctx)
+	headwords, err := s.repo.ListFeaturedCandidateHeadwords(ctx)
 	if err != nil {
 		return nil, wrapFeaturedSourceError("list featured candidates", err)
 	}
 
 	s.featuredCandidates = buildFeaturedCandidateCache(headwords)
-	return append([]string(nil), s.featuredCandidates.group(phrases)...), nil
+	return s.featuredCandidates.group(phrases), nil
 }
 
 func buildFeaturedCandidateCache(headwords []string) featuredCandidateCache {
@@ -158,7 +150,7 @@ func appendUniqueFeaturedHeadword(target *[]string, indexes map[string]int, head
 	if trimmed == "" {
 		return
 	}
-	key := textutil.ToNormalized(trimmed)
+	key := norm.NormalizeHeadword(trimmed)
 	if key == "" {
 		return
 	}
@@ -176,14 +168,14 @@ func isCanonicalFeaturedHeadword(headword string) bool {
 	return headword == strings.ToLower(headword)
 }
 
-func (s *WordService) hydrateFeaturedHeadwords(ctx context.Context, headwords []string, phrases bool) ([]model.SuggestResponse, error) {
+func (s *WordService) hydrateFeaturedHeadwords(ctx context.Context, headwords []string, phrases bool) ([]SuggestResponse, error) {
 	words, err := s.repo.GetWordsByHeadwords(ctx, headwords, false, false, false)
 	if err != nil {
 		return nil, wrapFeaturedSourceError("hydrate featured batch", err)
 	}
 
 	indexedWords := indexFeaturedWords(words)
-	results := make([]model.SuggestResponse, 0, len(headwords))
+	results := make([]SuggestResponse, 0, len(headwords))
 	for _, headword := range headwords {
 		word, ok := indexedWords.exact(headword)
 		if !ok {
@@ -193,7 +185,7 @@ func (s *WordService) hydrateFeaturedHeadwords(ctx context.Context, headwords []
 			return nil, fmt.Errorf("%w: %q fell outside %s grouping", ErrFeaturedBatchIncomplete, word.Headword, featuredGroupName(phrases))
 		}
 		response := s.convertToWordResponse(word, nil, nil, false, false, false)
-		results = append(results, model.SuggestResponse{
+		results = append(results, SuggestResponse{
 			Headword:        response.Headword,
 			WordAnnotations: response.WordAnnotations,
 		})
@@ -202,19 +194,19 @@ func (s *WordService) hydrateFeaturedHeadwords(ctx context.Context, headwords []
 	return results, nil
 }
 
-type featuredWordIndex map[string][]*model.Word
+type featuredWordIndex map[string][]*repository.Word
 
-func indexFeaturedWords(words []model.Word) featuredWordIndex {
+func indexFeaturedWords(words []repository.Word) featuredWordIndex {
 	index := make(featuredWordIndex, len(words))
 	for i := range words {
-		key := textutil.ToNormalized(words[i].Headword)
+		key := norm.NormalizeHeadword(words[i].Headword)
 		index[key] = append(index[key], &words[i])
 	}
 	return index
 }
 
-func (index featuredWordIndex) exact(headword string) (*model.Word, bool) {
-	for _, candidate := range index[textutil.ToNormalized(headword)] {
+func (index featuredWordIndex) exact(headword string) (*repository.Word, bool) {
+	for _, candidate := range index[norm.NormalizeHeadword(headword)] {
 		if candidate.Headword == headword {
 			return candidate, true
 		}
@@ -230,14 +222,33 @@ func featuredGroupName(phrases bool) string {
 }
 
 func isPhraseHeadword(headword string) bool {
-	return strings.Contains(headword, " ")
+	return norm.IsMultiword(headword)
 }
 
-func defaultFeaturedShuffle(values []string) {
-	if len(values) <= 1 {
-		return
+func sampleFeaturedCandidates(candidates []string, limit int, shuffle func([]string)) []string {
+	if shuffle != nil {
+		sampled := append([]string(nil), candidates...)
+		shuffle(sampled)
+		return sampled[:limit]
 	}
-	rand.New(rand.NewSource(time.Now().UnixNano())).Shuffle(len(values), func(i, j int) {
-		values[i], values[j] = values[j], values[i]
-	})
+	return defaultFeaturedSample(candidates, limit)
+}
+
+func defaultFeaturedSample(candidates []string, limit int) []string {
+	if limit >= len(candidates) {
+		return append([]string(nil), candidates...)
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	selectedIndexes := make(map[int]struct{}, limit)
+	sampled := make([]string, 0, limit)
+	for cursor := len(candidates) - limit; cursor < len(candidates); cursor++ {
+		index := rng.Intn(cursor + 1)
+		if _, exists := selectedIndexes[index]; exists {
+			index = cursor
+		}
+		selectedIndexes[index] = struct{}{}
+		sampled = append(sampled, candidates[index])
+	}
+	return sampled
 }

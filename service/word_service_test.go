@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lib/pq"
 	"github.com/simp-lee/isdict-commons/model"
@@ -15,30 +16,30 @@ import (
 
 // mockRepository is a mock implementation of the WordRepository interface
 type mockRepository struct {
-	getWordByHeadwordFunc          func(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*model.Word, *model.WordVariant, error)
-	getWordsByHeadwordsFunc        func(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error)
-	getWordsByVariantsFunc         func(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error)
-	getWordsByVariantFunc          func(ctx context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error)
-	listSlugBootstrapHeadwordsFunc func(ctx context.Context) ([]string, error)
-	searchWordsFunc                func(ctx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.Word, int64, error)
-	suggestWordsFunc               func(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]model.Word, error)
-	searchPhrasesFunc              func(ctx context.Context, keyword string, limit int) ([]model.Word, error)
-	getPronunciationsByWordIDFunc  func(ctx context.Context, wordID uint, accent *int) ([]model.Pronunciation, error)
-	getSensesByWordIDFunc          func(ctx context.Context, wordID uint, pos *int) ([]model.Sense, error)
+	getWordByHeadwordFunc              func(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error)
+	getWordsByHeadwordsFunc            func(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error)
+	getWordsByVariantsFunc             func(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error)
+	getWordsByVariantFunc              func(ctx context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error)
+	listFeaturedCandidateHeadwordsFunc func(ctx context.Context) ([]string, error)
+	searchWordsFunc                    func(ctx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error)
+	suggestWordsFunc                   func(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error)
+	searchPhrasesFunc                  func(ctx context.Context, keyword string, limit int) ([]repository.Word, error)
+	getPronunciationsByWordIDFunc      func(ctx context.Context, wordID int64, accent *string) ([]repository.Pronunciation, error)
+	getSensesByWordIDFunc              func(ctx context.Context, wordID int64, pos *string) ([]repository.Sense, error)
 }
 
-func (m *mockRepository) GetWordByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*model.Word, *model.WordVariant, error) {
+func (m *mockRepository) GetWordByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
 	if m.getWordByHeadwordFunc != nil {
 		return m.getWordByHeadwordFunc(ctx, headword, includeVariants, includePronunciations, includeSenses)
 	}
 	return nil, nil, repository.ErrWordNotFound
 }
 
-func (m *mockRepository) GetWordsByHeadwords(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error) {
+func (m *mockRepository) GetWordsByHeadwords(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 	if m.getWordsByHeadwordsFunc != nil {
 		return m.getWordsByHeadwordsFunc(ctx, headwords, includeVariants, includePronunciations, includeSenses)
 	}
-	return []model.Word{}, nil
+	return []repository.Word{}, nil
 }
 
 func (m *mockRepository) GetWordsByVariants(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error) {
@@ -48,53 +49,53 @@ func (m *mockRepository) GetWordsByVariants(ctx context.Context, variants []stri
 	return []repository.BatchVariantMatch{}, nil
 }
 
-func (m *mockRepository) GetWordsByVariant(ctx context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error) {
+func (m *mockRepository) GetWordsByVariant(ctx context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
 	if m.getWordsByVariantFunc != nil {
 		return m.getWordsByVariantFunc(ctx, variant, kind, includePronunciations, includeSenses)
 	}
 	return nil, nil, repository.ErrVariantNotFound
 }
 
-func (m *mockRepository) ListSlugBootstrapHeadwords(ctx context.Context) ([]string, error) {
-	if m.listSlugBootstrapHeadwordsFunc != nil {
-		return m.listSlugBootstrapHeadwordsFunc(ctx)
+func (m *mockRepository) ListFeaturedCandidateHeadwords(ctx context.Context) ([]string, error) {
+	if m.listFeaturedCandidateHeadwordsFunc != nil {
+		return m.listFeaturedCandidateHeadwordsFunc(ctx)
 	}
 	return []string{}, nil
 }
 
-func (m *mockRepository) SearchWords(ctx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.Word, int64, error) {
+func (m *mockRepository) SearchWords(ctx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
 	if m.searchWordsFunc != nil {
 		return m.searchWordsFunc(ctx, keyword, pos, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars, limit, offset)
 	}
-	return []model.Word{}, 0, nil
+	return []repository.Word{}, 0, nil
 }
 
-func (m *mockRepository) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]model.Word, error) {
+func (m *mockRepository) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
 	if m.suggestWordsFunc != nil {
 		return m.suggestWordsFunc(ctx, prefix, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars, limit)
 	}
-	return []model.Word{}, nil
+	return []repository.Word{}, nil
 }
 
-func (m *mockRepository) SearchPhrases(ctx context.Context, keyword string, limit int) ([]model.Word, error) {
+func (m *mockRepository) SearchPhrases(ctx context.Context, keyword string, limit int) ([]repository.Word, error) {
 	if m.searchPhrasesFunc != nil {
 		return m.searchPhrasesFunc(ctx, keyword, limit)
 	}
-	return []model.Word{}, nil
+	return []repository.Word{}, nil
 }
 
-func (m *mockRepository) GetPronunciationsByWordID(ctx context.Context, wordID uint, accent *int) ([]model.Pronunciation, error) {
+func (m *mockRepository) GetPronunciationsByWordID(ctx context.Context, wordID int64, accent *string) ([]repository.Pronunciation, error) {
 	if m.getPronunciationsByWordIDFunc != nil {
 		return m.getPronunciationsByWordIDFunc(ctx, wordID, accent)
 	}
-	return []model.Pronunciation{}, nil
+	return []repository.Pronunciation{}, nil
 }
 
-func (m *mockRepository) GetSensesByWordID(ctx context.Context, wordID uint, pos *int) ([]model.Sense, error) {
+func (m *mockRepository) GetSensesByWordID(ctx context.Context, wordID int64, pos *string) ([]repository.Sense, error) {
 	if m.getSensesByWordIDFunc != nil {
 		return m.getSensesByWordIDFunc(ctx, wordID, pos)
 	}
-	return []model.Sense{}, nil
+	return []repository.Sense{}, nil
 }
 
 func createTestConfig() ServiceConfig {
@@ -102,6 +103,34 @@ func createTestConfig() ServiceConfig {
 		BatchMaxSize:    100,
 		SearchMaxLimit:  100,
 		SuggestMaxLimit: 50,
+	}
+}
+
+func wordWithSummary(headword, summary string) repository.Word {
+	return repository.Word{
+		Headword:    headword,
+		SummariesZH: summariesZH(summary),
+	}
+}
+
+func summariesZH(summary string) []model.EntrySummaryZH {
+	if summary == "" {
+		return nil
+	}
+	return []model.EntrySummaryZH{{SummaryText: summary}}
+}
+
+func entryLearningSignal(cefrLevel int, cefrSource string) *model.EntryLearningSignal {
+	return &model.EntryLearningSignal{
+		CEFRLevel:  int16(cefrLevel),
+		CEFRSource: cefrSource,
+	}
+}
+
+func senseLearningSignal(cefrLevel int, cefrSource string) *model.SenseLearningSignal {
+	return &model.SenseLearningSignal{
+		CEFRLevel:  int16(cefrLevel),
+		CEFRSource: cefrSource,
 	}
 }
 
@@ -181,12 +210,12 @@ func runContextForwardingGetWordByHeadword(t *testing.T, ctx context.Context, cf
 
 func runContextForwardingGetWordsByVariant(t *testing.T, ctx context.Context, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
-		getWordsByVariantFunc: func(callCtx context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
+		getWordsByVariantFunc: func(callCtx context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
 			assertForwardedContext(t, ctx, callCtx)
 			if includePronunciations || includeSenses {
 				t.Fatalf("expected include flags to stay false, got pronunciations=%v senses=%v", includePronunciations, includeSenses)
 			}
-			return []repository.Word{{ID: 1, Headword: "learn"}}, []repository.WordVariant{{WordID: 1, VariantText: variant}}, nil
+			return []repository.Word{{ID: 1, Headword: "learn"}}, []repository.WordVariant{{WordID: 1, FormText: variant}}, nil
 		},
 	}, cfg)
 	_, err := service.GetWordsByVariant(ctx, "learnt", nil, false, false)
@@ -194,7 +223,7 @@ func runContextForwardingGetWordsByVariant(t *testing.T, ctx context.Context, cf
 }
 
 func runContextForwardingGetWordsBatch(t *testing.T, ctx context.Context, cfg ServiceConfig) {
-	batchFallbackCalled := false
+	batchVariantCalled := false
 	service := NewWordService(&mockRepository{
 		getWordsByHeadwordsFunc: func(callCtx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 			assertForwardedContext(t, ctx, callCtx)
@@ -205,20 +234,20 @@ func runContextForwardingGetWordsBatch(t *testing.T, ctx context.Context, cfg Se
 		},
 		getWordsByVariantsFunc: func(callCtx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error) {
 			assertForwardedContext(t, ctx, callCtx)
-			batchFallbackCalled = true
+			batchVariantCalled = true
 			if !reflect.DeepEqual(variants, []string{"learnt"}) {
-				t.Fatalf("expected batch fallback for [learnt], got %v", variants)
+				t.Fatalf("expected batch entry_forms lookup for [learnt], got %v", variants)
 			}
 			return []repository.BatchVariantMatch{{
 				Word:    repository.Word{ID: 2, Headword: "learn"},
-				Variant: repository.WordVariant{WordID: 2, VariantText: "learnt"},
+				Variant: repository.WordVariant{WordID: 2, FormText: "learnt"},
 			}}, nil
 		},
 	}, cfg)
-	responses, meta, err := service.GetWordsBatch(ctx, &model.BatchRequest{Words: []string{"learn", "learnt"}})
+	responses, meta, err := service.GetWordsBatch(ctx, &BatchRequest{Words: []string{"learn", "learnt"}})
 	assertNoServiceError(t, err)
-	if !batchFallbackCalled {
-		t.Fatal("expected batch fallback repository call")
+	if !batchVariantCalled {
+		t.Fatal("expected batch entry_forms repository call")
 	}
 	if len(responses) != 2 || meta == nil || *meta.Found != 2 {
 		t.Fatalf("unexpected batch result: responses=%d meta=%+v", len(responses), meta)
@@ -227,7 +256,7 @@ func runContextForwardingGetWordsBatch(t *testing.T, ctx context.Context, cfg Se
 
 func runContextForwardingSearchWords(t *testing.T, ctx context.Context, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
-		searchWordsFunc: func(callCtx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(callCtx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
 			assertForwardedContext(t, ctx, callCtx)
 			return nil, 0, nil
 		},
@@ -264,7 +293,7 @@ func runContextForwardingGetPronunciations(t *testing.T, ctx context.Context, cf
 			assertForwardedContext(t, ctx, callCtx)
 			return &repository.Word{ID: 1, Headword: headword}, nil, nil
 		},
-		getPronunciationsByWordIDFunc: func(callCtx context.Context, wordID uint, accent *int) ([]model.Pronunciation, error) {
+		getPronunciationsByWordIDFunc: func(callCtx context.Context, wordID int64, accent *string) ([]repository.Pronunciation, error) {
 			assertForwardedContext(t, ctx, callCtx)
 			return nil, nil
 		},
@@ -279,7 +308,7 @@ func runContextForwardingGetSenses(t *testing.T, ctx context.Context, cfg Servic
 			assertForwardedContext(t, ctx, callCtx)
 			return &repository.Word{ID: 1, Headword: headword}, nil, nil
 		},
-		getSensesByWordIDFunc: func(callCtx context.Context, wordID uint, pos *int) ([]model.Sense, error) {
+		getSensesByWordIDFunc: func(callCtx context.Context, wordID int64, pos *string) ([]repository.Sense, error) {
 			assertForwardedContext(t, ctx, callCtx)
 			return nil, nil
 		},
@@ -313,7 +342,7 @@ func TestGetWordsBatch_LimitExceeded(t *testing.T) {
 		words[i] = fmt.Sprintf("test-%d", i)
 	}
 
-	req := &model.BatchRequest{
+	req := &BatchRequest{
 		Words: words,
 	}
 
@@ -333,14 +362,14 @@ func TestGetWordsBatch_RejectsRawOversizedInputBeforeCleanup(t *testing.T) {
 
 	repoCalled := false
 	mockRepo := &mockRepository{
-		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error) {
+		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 			repoCalled = true
 			return nil, nil
 		},
 	}
 
 	service := NewWordService(mockRepo, cfg)
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{
 		Words: []string{" apple ", "", "apple", "pear", "  ", "pear"},
 	})
 	if err == nil {
@@ -364,17 +393,17 @@ func TestGetWordsBatch_PreservesSeparatorDistinctInputs(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error) {
+		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 			expected := []string{"cooperate", "co-operate"}
 			if !reflect.DeepEqual(headwords, expected) {
 				t.Fatalf("expected cleaned headwords %v, got %v", expected, headwords)
 			}
-			return []model.Word{{ID: 1, Headword: "cooperate"}, {ID: 2, Headword: "co-operate"}}, nil
+			return []repository.Word{{ID: 1, Headword: "cooperate"}, {ID: 2, Headword: "co-operate"}}, nil
 		},
 	}
 
 	service := NewWordService(mockRepo, cfg)
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{
 		Words: []string{"cooperate", "co-operate", " cooperate "},
 	})
 	if err != nil {
@@ -408,7 +437,7 @@ func TestGetWordsBatch_EmptyRequest(t *testing.T) {
 	mockRepo := &mockRepository{}
 	service := NewWordService(mockRepo, cfg)
 
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{})
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -441,8 +470,8 @@ func TestGetWordsBatch_PreservesOrder(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error) {
-			return []model.Word{
+		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
+			return []repository.Word{
 				{ID: 3, Headword: "cat"},
 				{ID: 1, Headword: "apple"},
 				{ID: 2, Headword: "book"},
@@ -452,7 +481,7 @@ func TestGetWordsBatch_PreservesOrder(t *testing.T) {
 
 	service := NewWordService(mockRepo, cfg)
 
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{
 		Words: []string{"apple", "book", "cat"},
 	})
 	if err != nil {
@@ -486,8 +515,8 @@ func TestGetWordsBatch_CaseSensitiveVariants(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error) {
-			return []model.Word{
+		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
+			return []repository.Word{
 				{ID: 1, Headword: "Polish"},
 				{ID: 2, Headword: "polish"},
 			}, nil
@@ -496,7 +525,7 @@ func TestGetWordsBatch_CaseSensitiveVariants(t *testing.T) {
 
 	service := NewWordService(mockRepo, cfg)
 
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{
 		Words: []string{"Polish", "polish"},
 	})
 	if err != nil {
@@ -529,14 +558,14 @@ func TestGetWordsBatch_PartialResults(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]model.Word, error) {
-			return []model.Word{{ID: 1, Headword: "apple"}}, nil
+		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
+			return []repository.Word{{ID: 1, Headword: "apple"}}, nil
 		},
 	}
 
 	service := NewWordService(mockRepo, cfg)
 
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{
 		Words: []string{"apple", "xyz123", "book"},
 	})
 	if err != nil {
@@ -570,7 +599,7 @@ func TestSearchWords_LimitValidation(t *testing.T) {
 	expectedLimits := []int{100, 20, 20} // max for >max, default for <=0, default for negative
 
 	mockRepo := &mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
 			if callCount < len(expectedLimits) {
 				if limit != expectedLimits[callCount] {
 					t.Errorf("Call %d: Expected limit to be %d, got %d", callCount, expectedLimits[callCount], limit)
@@ -606,11 +635,11 @@ func TestSearchWords_OffsetValidation(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.Word, int64, error) {
+		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
 			if offset != 0 {
 				t.Errorf("Expected offset to be reset to 0, got %d", offset)
 			}
-			return []model.Word{}, 0, nil
+			return []repository.Word{}, 0, nil
 		},
 	}
 
@@ -629,12 +658,12 @@ func TestSuggestWords_LimitValidation(t *testing.T) {
 	expectedLimits := []int{50, 10, 10}
 
 	mockRepo := &mockRepository{
-		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]model.Word, error) {
+		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
 			if callCount < len(expectedLimits) && limit != expectedLimits[callCount] {
 				t.Errorf("Call %d: Expected limit to be %d, got %d", callCount, expectedLimits[callCount], limit)
 			}
 			callCount++
-			return []model.Word{}, nil
+			return []repository.Word{}, nil
 		},
 	}
 
@@ -657,18 +686,18 @@ func TestSuggestWords_LimitValidation(t *testing.T) {
 func TestGetWordsByVariant_ValidKind(t *testing.T) {
 	cfg := createTestConfig()
 
-	formKind := int(model.VariantForm)
+	formKind := model.RelationKindForm
 	mockRepo := &mockRepository{
-		getWordsByVariantFunc: func(_ context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error) {
+		getWordsByVariantFunc: func(_ context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
 			if kind == nil {
 				t.Error("Expected kind to be set, got nil")
 			} else if *kind != formKind {
-				t.Errorf("Expected kind=%d, got %d", formKind, *kind)
+				t.Errorf("Expected kind=%q, got %q", formKind, *kind)
 			}
 			if !includePronunciations || !includeSenses {
 				t.Fatalf("expected include flags to be forwarded, got pronunciations=%v senses=%v", includePronunciations, includeSenses)
 			}
-			return []model.Word{{ID: 1, Headword: "test"}}, []model.WordVariant{{WordID: 1, VariantText: "testing"}}, nil
+			return []repository.Word{{ID: 1, Headword: "test"}}, []repository.WordVariant{{WordID: 1, FormText: "testing"}}, nil
 		},
 	}
 
@@ -688,7 +717,7 @@ func TestGetWordByHeadword_NotFound(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*model.Word, *model.WordVariant, error) {
+		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
 			return nil, nil, repository.ErrWordNotFound
 		},
 	}
@@ -708,7 +737,7 @@ func TestGetWordByHeadword_NotFoundWrappedError(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*model.Word, *model.WordVariant, error) {
+		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
 			return nil, nil, fmt.Errorf("cache miss: %w", repository.ErrWordNotFound)
 		},
 	}
@@ -728,7 +757,7 @@ func TestGetWordsByVariant_NotFoundWrappedError(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByVariantFunc: func(_ context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error) {
+		getWordsByVariantFunc: func(_ context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
 			return nil, nil, fmt.Errorf("decorator miss: %w", repository.ErrVariantNotFound)
 		},
 	}
@@ -748,32 +777,34 @@ func TestGetWordsByVariant_MultipleForms(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByVariantFunc: func(_ context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error) {
+		getWordsByVariantFunc: func(_ context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
 			if variant != "lit" {
 				t.Fatalf("unexpected variant: %s", variant)
 			}
 
-			words := []model.Word{{
-				ID:            1,
-				Headword:      "light",
-				CEFRLevel:     1,
-				FrequencyRank: 150,
+			words := []repository.Word{{
+				ID:       1,
+				Headword: "light",
+				LearningSignal: &model.EntryLearningSignal{
+					CEFRLevel:     1,
+					FrequencyRank: 150,
+				},
 			}}
 
-			variants := []model.WordVariant{
+			variants := []repository.WordVariant{
 				{
-					WordID:      1,
-					VariantText: "lit",
-					Kind:        model.VariantForm,
-					FormType:    intPtr(1),
-					Tags:        pq.StringArray{"past"},
+					WordID:          1,
+					FormText:        "lit",
+					RelationKind:    model.RelationKindForm,
+					FormType:        stringPtr("past"),
+					SourceRelations: pq.StringArray{"past"},
 				},
 				{
-					WordID:      1,
-					VariantText: "lit",
-					Kind:        model.VariantForm,
-					FormType:    intPtr(2),
-					Tags:        pq.StringArray{"past_participle"},
+					WordID:          1,
+					FormText:        "lit",
+					RelationKind:    model.RelationKindForm,
+					FormType:        stringPtr("past_participle"),
+					SourceRelations: pq.StringArray{"past_participle"},
 				},
 			}
 
@@ -795,31 +826,33 @@ func TestGetWordsByVariant_MultipleForms(t *testing.T) {
 	if len(info) != 2 {
 		t.Fatalf("Expected 2 variant entries, got %d", len(info))
 	}
-	if info[0].FormType != "past" || len(info[0].Tags) != 1 || info[0].Tags[0] != "past" {
+	if info[0].FormType != "past" || len(info[0].SourceRelations) != 1 || info[0].SourceRelations[0] != "past" {
 		t.Errorf("Unexpected first variant: %+v", info[0])
 	}
-	if info[1].FormType != "past_participle" || len(info[1].Tags) != 1 || info[1].Tags[0] != "past_participle" {
+	if info[1].FormType != "past_participle" || len(info[1].SourceRelations) != 1 || info[1].SourceRelations[0] != "past_participle" {
 		t.Errorf("Unexpected second variant: %+v", info[1])
 	}
 }
 
-func TestGetWordsByVariant_TagsRemainNormalized(t *testing.T) {
+func TestGetWordsByVariant_SourceRelationsRemainNormalized(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByVariantFunc: func(_ context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error) {
-			words := []model.Word{{
-				ID:            10,
-				Headword:      "color",
-				CEFRLevel:     2,
-				FrequencyRank: 450,
+		getWordsByVariantFunc: func(_ context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
+			words := []repository.Word{{
+				ID:       10,
+				Headword: "color",
+				LearningSignal: &model.EntryLearningSignal{
+					CEFRLevel:     2,
+					FrequencyRank: 450,
+				},
 			}}
 
-			variants := []model.WordVariant{{
-				WordID:      10,
-				VariantText: "colour",
-				Kind:        model.VariantAlias,
-				Tags:        pq.StringArray{"british", "alternative_spelling"},
+			variants := []repository.WordVariant{{
+				WordID:          10,
+				FormText:        "colour",
+				RelationKind:    model.RelationKindAlias,
+				SourceRelations: pq.StringArray{"british", "alternative_spelling"},
 			}}
 
 			return words, variants, nil
@@ -836,15 +869,15 @@ func TestGetWordsByVariant_TagsRemainNormalized(t *testing.T) {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
 
-	tags := results[0].VariantInfo[0].Tags
-	if len(tags) != 2 {
-		t.Fatalf("Expected 2 tags, got %d", len(tags))
+	sourceRelations := results[0].VariantInfo[0].SourceRelations
+	if len(sourceRelations) != 2 {
+		t.Fatalf("Expected 2 source relations, got %d", len(sourceRelations))
 	}
-	if tags[0] != "british" {
-		t.Errorf("Expected first tag 'british', got %q", tags[0])
+	if sourceRelations[0] != "british" {
+		t.Errorf("Expected first source relation 'british', got %q", sourceRelations[0])
 	}
-	if tags[1] != "alternative_spelling" {
-		t.Errorf("Expected second tag 'alternative_spelling', got %q", tags[1])
+	if sourceRelations[1] != "alternative_spelling" {
+		t.Errorf("Expected second source relation 'alternative_spelling', got %q", sourceRelations[1])
 	}
 }
 
@@ -852,16 +885,15 @@ func TestGetWordsByVariant_MapsCEFRLevel(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		getWordsByVariantFunc: func(_ context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]model.Word, []model.WordVariant, error) {
-			return []model.Word{{
-					ID:         1,
-					Headword:   "light",
-					CEFRLevel:  1,
-					CEFRSource: "oxford",
-				}}, []model.WordVariant{{
-					WordID:      1,
-					VariantText: "lit",
-					Kind:        model.VariantForm,
+		getWordsByVariantFunc: func(_ context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
+			return []repository.Word{{
+					ID:             1,
+					Headword:       "light",
+					LearningSignal: entryLearningSignal(1, "oxford"),
+				}}, []repository.WordVariant{{
+					WordID:       1,
+					FormText:     "lit",
+					RelationKind: model.RelationKindForm,
 				}}, nil
 		},
 	}
@@ -875,8 +907,8 @@ func TestGetWordsByVariant_MapsCEFRLevel(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
-	if results[0].CEFRLevel != "A1" {
-		t.Fatalf("Expected CEFR level A1, got %q", results[0].CEFRLevel)
+	if results[0].CEFRLevel != 1 || results[0].CEFRLevelName != "A1" {
+		t.Fatalf("Expected CEFR level 1/A1, got %d/%q", results[0].CEFRLevel, results[0].CEFRLevelName)
 	}
 	if results[0].CEFRSource != "oxford" {
 		t.Fatalf("Expected CEFR source oxford, got %q", results[0].CEFRSource)
@@ -887,15 +919,12 @@ func TestSearchWords_MapsCEFRLevelAndSource(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
 			return []repository.Word{{
-				ID:         2,
-				Headword:   "test",
-				CEFRLevel:  4,
-				CEFRSource: "both",
-				Senses: []repository.Sense{{
-					POS: 1,
-				}},
+				ID:             2,
+				Headword:       "test",
+				Pos:            model.POSNoun,
+				LearningSignal: entryLearningSignal(4, "both"),
 			}}, 1, nil
 		},
 	}
@@ -911,8 +940,8 @@ func TestSearchWords_MapsCEFRLevelAndSource(t *testing.T) {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
 
-	if results[0].CEFRLevel != "B2" {
-		t.Fatalf("Expected CEFR level B2, got %q", results[0].CEFRLevel)
+	if results[0].CEFRLevel != 4 || results[0].CEFRLevelName != "B2" {
+		t.Fatalf("Expected CEFR level 4/B2, got %d/%q", results[0].CEFRLevel, results[0].CEFRLevelName)
 	}
 
 	if results[0].CEFRSource != "both" {
@@ -926,9 +955,8 @@ func TestSuggestWords_MapsCEFRLevel(t *testing.T) {
 	mockRepo := &mockRepository{
 		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
 			return []repository.Word{{
-				Headword:   "learn",
-				CEFRLevel:  5,
-				CEFRSource: "cefrj",
+				Headword:       "learn",
+				LearningSignal: entryLearningSignal(5, "cefrj"),
 			}}, nil
 		},
 	}
@@ -944,8 +972,8 @@ func TestSuggestWords_MapsCEFRLevel(t *testing.T) {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
 
-	if results[0].CEFRLevel != "C1" {
-		t.Fatalf("Expected CEFR level C1, got %q", results[0].CEFRLevel)
+	if results[0].CEFRLevel != 5 || results[0].CEFRLevelName != "C1" {
+		t.Fatalf("Expected CEFR level 5/C1, got %d/%q", results[0].CEFRLevel, results[0].CEFRLevelName)
 	}
 }
 
@@ -955,9 +983,8 @@ func TestSearchPhrases_MapsCEFRLevel(t *testing.T) {
 	mockRepo := &mockRepository{
 		searchPhrasesFunc: func(_ context.Context, keyword string, limit int) ([]repository.Word, error) {
 			return []repository.Word{{
-				Headword:   "look up",
-				CEFRLevel:  6,
-				CEFRSource: "oxford",
+				Headword:       "look up",
+				LearningSignal: entryLearningSignal(6, "oxford"),
 			}}, nil
 		},
 	}
@@ -973,8 +1000,8 @@ func TestSearchPhrases_MapsCEFRLevel(t *testing.T) {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
 
-	if results[0].CEFRLevel != "C2" {
-		t.Fatalf("Expected CEFR level C2, got %q", results[0].CEFRLevel)
+	if results[0].CEFRLevel != 6 || results[0].CEFRLevelName != "C2" {
+		t.Fatalf("Expected CEFR level 6/C2, got %d/%q", results[0].CEFRLevel, results[0].CEFRLevelName)
 	}
 }
 
@@ -984,18 +1011,14 @@ func TestGetWordByHeadword_MapsWordAndSenseCEFRLevels(t *testing.T) {
 	mockRepo := &mockRepository{
 		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
 			return &repository.Word{
-				ID:         3,
-				Headword:   "learn",
-				CEFRLevel:  2,
-				CEFRSource: "both",
+				ID:             3,
+				Headword:       "learn",
+				Pos:            model.POSNoun,
+				LearningSignal: entryLearningSignal(2, "both"),
 				Senses: []repository.Sense{{
-					ID:           7,
-					POS:          1,
-					CEFRLevel:    3,
-					CEFRSource:   "cefrj",
-					DefinitionEN: "to gain knowledge",
-					DefinitionZH: "学习",
-					SenseOrder:   1,
+					ID:             7,
+					LearningSignal: senseLearningSignal(3, "cefrj"),
+					SenseOrder:     1,
 				}},
 			}, nil, nil
 		},
@@ -1008,16 +1031,16 @@ func TestGetWordByHeadword_MapsWordAndSenseCEFRLevels(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if result.CEFRLevel != "A2" {
-		t.Fatalf("Expected word CEFR level A2, got %q", result.CEFRLevel)
+	if result.CEFRLevel != 2 || result.CEFRLevelName != "A2" {
+		t.Fatalf("Expected word CEFR level 2/A2, got %d/%q", result.CEFRLevel, result.CEFRLevelName)
 	}
 
 	if len(result.Senses) != 1 {
 		t.Fatalf("Expected 1 sense, got %d", len(result.Senses))
 	}
 
-	if result.Senses[0].CEFRLevel != "B1" {
-		t.Fatalf("Expected sense CEFR level B1, got %q", result.Senses[0].CEFRLevel)
+	if result.Senses[0].CEFRLevel != 3 || result.Senses[0].CEFRLevelName != "B1" {
+		t.Fatalf("Expected sense CEFR level 3/B1, got %d/%q", result.Senses[0].CEFRLevel, result.Senses[0].CEFRLevelName)
 	}
 
 	if result.Senses[0].CEFRSource != "cefrj" {
@@ -1050,9 +1073,11 @@ func runSchoolLevelGetWordByHeadword(t *testing.T, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
 		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
 			return &repository.Word{
-				ID:          1,
-				Headword:    headword,
-				SchoolLevel: 3,
+				ID:       1,
+				Headword: headword,
+				LearningSignal: &model.EntryLearningSignal{
+					SchoolLevel: 3,
+				},
 			}, nil, nil
 		},
 	}, cfg)
@@ -1068,14 +1093,16 @@ func runSchoolLevelGetWordByHeadword(t *testing.T, cfg ServiceConfig) {
 
 func runSchoolLevelGetWordsByVariant(t *testing.T, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
-		getWordsByVariantFunc: func(_ context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
+		getWordsByVariantFunc: func(_ context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
 			return []repository.Word{{
-					ID:          1,
-					Headword:    "learn",
-					SchoolLevel: 2,
+					ID:       1,
+					Headword: "learn",
+					LearningSignal: &model.EntryLearningSignal{
+						SchoolLevel: 2,
+					},
 				}}, []repository.WordVariant{{
-					WordID:      1,
-					VariantText: variant,
+					WordID:   1,
+					FormText: variant,
 				}}, nil
 		},
 	}, cfg)
@@ -1094,12 +1121,14 @@ func runSchoolLevelGetWordsByVariant(t *testing.T, cfg ServiceConfig) {
 
 func runSchoolLevelSearchWords(t *testing.T, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
 			return []repository.Word{{
-				ID:          1,
-				Headword:    keyword,
-				SchoolLevel: 1,
-				Senses:      []repository.Sense{{POS: 1}},
+				ID:       1,
+				Headword: keyword,
+				Pos:      model.POSNoun,
+				LearningSignal: &model.EntryLearningSignal{
+					SchoolLevel: 1,
+				},
 			}}, 1, nil
 		},
 	}, cfg)
@@ -1120,8 +1149,10 @@ func runSchoolLevelSuggestWords(t *testing.T, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
 		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
 			return []repository.Word{{
-				Headword:    prefix,
-				SchoolLevel: 2,
+				Headword: prefix,
+				LearningSignal: &model.EntryLearningSignal{
+					SchoolLevel: 2,
+				},
 			}}, nil
 		},
 	}, cfg)
@@ -1142,8 +1173,10 @@ func runSchoolLevelSearchPhrases(t *testing.T, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
 		searchPhrasesFunc: func(_ context.Context, keyword string, limit int) ([]repository.Word, error) {
 			return []repository.Word{{
-				Headword:    keyword + " up",
-				SchoolLevel: 3,
+				Headword: keyword + " up",
+				LearningSignal: &model.EntryLearningSignal{
+					SchoolLevel: 3,
+				},
 			}}, nil
 		},
 	}, cfg)
@@ -1160,13 +1193,225 @@ func runSchoolLevelSearchPhrases(t *testing.T, cfg ServiceConfig) {
 	}
 }
 
-func intPtr(v int) *int {
+func stringPtr(v string) *string {
 	return &v
 }
 
-// TestGetWordsBatch_WithVariantFallback tests the automatic fallback to variant query
-// when a word is not found in the main words table
-func TestGetWordsBatch_WithVariantFallback(t *testing.T) {
+func int64Ptr(v int64) *int64 {
+	return &v
+}
+
+func TestGetWordByHeadword_ExposesCommonsV1Data(t *testing.T) {
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	cleanEtymology := "from Old English leornen"
+	romanization := "xue2 xi2"
+	runID := int64(99)
+
+	word := &repository.Word{
+		ID:          10,
+		Headword:    "learn",
+		Pos:         model.POSVerb,
+		SourceRunID: 1,
+		SourceRun: &model.ImportRun{
+			ID:              1,
+			SourceName:      "wiktionary",
+			SourcePath:      "/data/enwiktionary.xml",
+			PipelineVersion: "v1",
+			Status:          model.ImportRunStatusCompleted,
+			StartedAt:       now,
+		},
+		LearningSignal: &model.EntryLearningSignal{
+			EntryID:        10,
+			CEFRLevel:      2,
+			CEFRSource:     model.CEFRSourceOxford,
+			CEFRRunID:      int64Ptr(91),
+			OxfordLevel:    1,
+			OxfordRunID:    int64Ptr(92),
+			CETLevel:       1,
+			CETRunID:       int64Ptr(93),
+			SchoolLevel:    2,
+			FrequencyRank:  123,
+			FrequencyCount: 456,
+			FrequencyRunID: int64Ptr(94),
+			CollinsStars:   3,
+			CollinsRunID:   int64Ptr(95),
+			UpdatedAt:      now,
+		},
+		CEFRSourceSignals: []model.EntryCEFRSourceSignal{{
+			EntryID:    10,
+			CEFRSource: model.CEFRSourceCEFRJ,
+			CEFRLevel:  3,
+			CEFRRunID:  &runID,
+			UpdatedAt:  now,
+		}},
+		SummariesZH: []model.EntrySummaryZH{{
+			ID:          11,
+			EntryID:     10,
+			Source:      "manual",
+			SourceRunID: 2,
+			SummaryText: "学习",
+			UpdatedAt:   now,
+		}},
+		Etymology: &model.EntryEtymology{
+			EntryID:            10,
+			Source:             "wiktionary",
+			SourceRunID:        3,
+			EtymologyTextRaw:   "raw etymology",
+			EtymologyTextClean: &cleanEtymology,
+			UpdatedAt:          now,
+		},
+		Pronunciations: []repository.Pronunciation{{
+			ID:           20,
+			WordID:       10,
+			Accent:       model.AccentBritish,
+			IPA:          "lɜːn",
+			IsPrimary:    true,
+			DisplayOrder: 2,
+		}},
+		PronunciationAudios: []repository.PronunciationAudio{{
+			ID:            21,
+			WordID:        10,
+			Accent:        model.AccentBritish,
+			AudioFilename: "LL-Q1860 (eng)-Vealhurl-learn.wav",
+			IsPrimary:     true,
+			DisplayOrder:  1,
+		}},
+		Senses: []repository.Sense{{
+			ID:         30,
+			WordID:     10,
+			SenseOrder: 1,
+			LearningSignal: &model.SenseLearningSignal{
+				SenseID:     30,
+				CEFRLevel:   2,
+				CEFRSource:  model.CEFRSourceOxford,
+				CEFRRunID:   int64Ptr(96),
+				OxfordLevel: 1,
+				OxfordRunID: int64Ptr(97),
+				UpdatedAt:   now,
+			},
+			CEFRSourceSignals: []model.SenseCEFRSourceSignal{{
+				SenseID:    30,
+				CEFRSource: model.CEFRSourceOctanove,
+				CEFRLevel:  4,
+				CEFRRunID:  int64Ptr(98),
+				UpdatedAt:  now,
+			}},
+			GlossesEN: []model.SenseGlossEN{{
+				ID:         31,
+				SenseID:    30,
+				GlossOrder: 1,
+				TextEN:     "to gain knowledge",
+			}},
+			GlossesZH: []model.SenseGlossZH{{
+				ID:           32,
+				SenseID:      30,
+				Source:       "manual",
+				SourceRunID:  4,
+				GlossOrder:   1,
+				TextZHHans:   "学习知识",
+				Romanization: &romanization,
+				IsPrimary:    true,
+			}},
+			Labels: []model.SenseLabel{{
+				ID:         33,
+				SenseID:    30,
+				LabelType:  model.LabelTypeRegister,
+				LabelCode:  model.RegisterLabelFormal,
+				LabelOrder: 1,
+			}},
+			Examples: []repository.Example{{
+				ID:           34,
+				SenseID:      30,
+				Source:       "wiktionary",
+				ExampleOrder: 1,
+				SentenceEN:   "I learn quickly.",
+			}},
+			LexicalRelations: []model.LexicalRelation{{
+				ID:                   35,
+				EntryID:              10,
+				SenseID:              int64Ptr(30),
+				RelationType:         model.RelationTypeSynonym,
+				TargetText:           "study",
+				TargetTextNormalized: "study",
+				DisplayOrder:         1,
+			}},
+		}},
+		WordVariants: []repository.WordVariant{{
+			ID:              40,
+			WordID:          10,
+			FormText:        "learnt",
+			NormalizedForm:  "learnt",
+			RelationKind:    model.RelationKindForm,
+			FormType:        stringPtr("past"),
+			SourceRelations: pq.StringArray{"past"},
+			DisplayOrder:    1,
+		}},
+		LexicalRelations: []model.LexicalRelation{{
+			ID:                   50,
+			EntryID:              10,
+			RelationType:         model.RelationTypeDerived,
+			TargetText:           "learner",
+			TargetTextNormalized: "learner",
+			DisplayOrder:         2,
+		}},
+	}
+
+	service := NewWordService(&mockRepository{
+		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
+			if headword != "learn" || !includeVariants || !includePronunciations || !includeSenses {
+				t.Fatalf("unexpected lookup args: headword=%q variants=%v pronunciations=%v senses=%v", headword, includeVariants, includePronunciations, includeSenses)
+			}
+			return word, nil, nil
+		},
+	}, createTestConfig())
+
+	resp, err := service.GetWordByHeadword(context.Background(), "learn", nil, true, true, true)
+	if err != nil {
+		t.Fatalf("GetWordByHeadword() error = %v", err)
+	}
+
+	if resp.SourceRun == nil || resp.SourceRun.SourceName != "wiktionary" {
+		t.Fatalf("source run not exposed: %#v", resp.SourceRun)
+	}
+	if resp.CEFRLevel != 2 || resp.CEFRLevelName != "A2" || resp.CEFRSource != model.CEFRSourceOxford || resp.CEFRRunID == nil || *resp.CEFRRunID != 91 {
+		t.Fatalf("entry learning signal not exposed: %#v", resp.WordAnnotations)
+	}
+	if len(resp.CEFRSourceSignals) != 1 || resp.CEFRSourceSignals[0].Source != model.CEFRSourceCEFRJ || resp.CEFRSourceSignals[0].LevelName != "B1" {
+		t.Fatalf("entry CEFR source signals not exposed: %#v", resp.CEFRSourceSignals)
+	}
+	if resp.Etymology == nil || resp.Etymology.TextClean == nil || *resp.Etymology.TextClean != cleanEtymology {
+		t.Fatalf("etymology not exposed: %#v", resp.Etymology)
+	}
+	if len(resp.PronunciationAudios) != 1 || resp.PronunciationAudios[0].AudioFilename == "" {
+		t.Fatalf("pronunciation audio not exposed: %#v", resp.PronunciationAudios)
+	}
+	if len(resp.Senses) != 1 {
+		t.Fatalf("senses len = %d, want 1", len(resp.Senses))
+	}
+	sense := resp.Senses[0]
+	if len(sense.DefinitionsEN) != 1 || len(sense.DefinitionsZH) != 1 || sense.DefinitionsZH[0].Romanization == nil {
+		t.Fatalf("full gloss data not exposed: %#v", sense)
+	}
+	if len(sense.Labels) != 1 || sense.Labels[0].Code != model.RegisterLabelFormal {
+		t.Fatalf("labels not exposed: %#v", sense.Labels)
+	}
+	if len(sense.CEFRSourceSignals) != 1 || sense.CEFRSourceSignals[0].Source != model.CEFRSourceOctanove {
+		t.Fatalf("sense CEFR source signals not exposed: %#v", sense.CEFRSourceSignals)
+	}
+	if len(sense.LexicalRelations) != 1 || sense.LexicalRelations[0].TargetText != "study" {
+		t.Fatalf("sense lexical relations not exposed: %#v", sense.LexicalRelations)
+	}
+	if len(resp.LexicalRelations) != 1 || resp.LexicalRelations[0].TargetText != "learner" {
+		t.Fatalf("entry lexical relations not exposed: %#v", resp.LexicalRelations)
+	}
+	if len(resp.Variants) != 1 || resp.Variants[0].DisplayOrder != 1 {
+		t.Fatalf("entry forms not exposed: %#v", resp.Variants)
+	}
+}
+
+// TestGetWordsBatch_WithEntryFormsResolution tests batched entry_forms resolution
+// when an input is not found as a direct entries headword.
+func TestGetWordsBatch_WithEntryFormsResolution(t *testing.T) {
 	cfg := createTestConfig()
 
 	// Track which queries were made
@@ -1176,7 +1421,7 @@ func TestGetWordsBatch_WithVariantFallback(t *testing.T) {
 	mockRepo := &mockRepository{
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 			getWordsByHeadwordsCalled = true
-			// Only return "apple", "book" is not found in main table
+			// Only return "apple"; "book" is not found as a direct entries headword.
 			return []repository.Word{
 				{ID: 1, Headword: "apple"},
 			}, nil
@@ -1189,14 +1434,14 @@ func TestGetWordsBatch_WithVariantFallback(t *testing.T) {
 			}
 			return []repository.BatchVariantMatch{{
 				Word:    repository.Word{ID: 2, Headword: "book"},
-				Variant: repository.WordVariant{WordID: 2, VariantText: "book"},
+				Variant: repository.WordVariant{WordID: 2, FormText: "book"},
 			}}, nil
 		},
 	}
 
 	service := NewWordService(mockRepo, cfg)
 
-	req := &model.BatchRequest{
+	req := &BatchRequest{
 		Words: []string{"apple", "book", "xyz"},
 	}
 
@@ -1210,12 +1455,12 @@ func TestGetWordsBatch_WithVariantFallback(t *testing.T) {
 		t.Error("Expected GetWordsByHeadwords to be called")
 	}
 
-	// Verify a single batch variant query was triggered for unresolved words.
+	// Verify a single batch entry_forms query was triggered for unresolved words.
 	if getWordsByVariantsCalls != 1 {
-		t.Errorf("Expected 1 batch fallback query, got %d", getWordsByVariantsCalls)
+		t.Errorf("Expected 1 batch entry_forms query, got %d", getWordsByVariantsCalls)
 	}
 
-	// Verify results: 2 found (apple + book via fallback), 1 not found (xyz)
+	// Verify results: 2 found (apple + book via entry_forms), 1 not found (xyz)
 	if len(responses) != 2 {
 		t.Fatalf("Expected 2 responses, got %d", len(responses))
 	}
@@ -1262,7 +1507,7 @@ func TestGetWordsBatch_NormalizedFormMatching(t *testing.T) {
 	service := NewWordService(mockRepo, cfg)
 
 	// User queries with hyphen: "air-conditioning"
-	req := &model.BatchRequest{
+	req := &BatchRequest{
 		Words: []string{"air-conditioning"},
 	}
 
@@ -1302,7 +1547,7 @@ func TestGetWordsBatch_ApostrophePreservation(t *testing.T) {
 
 	service := NewWordService(mockRepo, cfg)
 
-	req := &model.BatchRequest{
+	req := &BatchRequest{
 		Words: []string{"it's", "its"},
 	}
 
@@ -1464,8 +1709,8 @@ func TestSuggestWords_PrefixLengthValidation(t *testing.T) {
 }
 
 // TestGetWordsBatch_MixedScenario tests a realistic scenario with:
-// - Direct matches in main table
-// - Variant fallback matches
+// - Direct entries matches
+// - entry_forms matches
 // - Not found words
 // - Different spellings (normalized form matching)
 func TestGetWordsBatch_MixedScenario(t *testing.T) {
@@ -1473,7 +1718,7 @@ func TestGetWordsBatch_MixedScenario(t *testing.T) {
 
 	mockRepo := &mockRepository{
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
-			// Main table returns: "apple", "air conditioning"
+			// Direct entries lookup returns: "apple", "air conditioning"
 			return []repository.Word{
 				{ID: 1, Headword: "apple"},
 				{ID: 2, Headword: "air conditioning"},
@@ -1486,14 +1731,14 @@ func TestGetWordsBatch_MixedScenario(t *testing.T) {
 			}
 			return []repository.BatchVariantMatch{{
 				Word:    repository.Word{ID: 3, Headword: "light"},
-				Variant: repository.WordVariant{WordID: 3, VariantText: "lit"},
+				Variant: repository.WordVariant{WordID: 3, FormText: "lit"},
 			}}, nil
 		},
 	}
 
 	service := NewWordService(mockRepo, cfg)
 
-	req := &model.BatchRequest{
+	req := &BatchRequest{
 		Words: []string{"apple", "air-conditioning", "lit", "nonexistent"},
 	}
 
@@ -1505,7 +1750,7 @@ func TestGetWordsBatch_MixedScenario(t *testing.T) {
 	// Expected results:
 	// 1. "apple" - direct match
 	// 2. "air-conditioning" - matched "air conditioning" via normalized form
-	// 3. "lit" - found "light" via variant fallback
+	// 3. "lit" - found "light" via entry_forms
 	// 4. "nonexistent" - not found
 
 	if len(responses) != 3 {
@@ -1533,36 +1778,36 @@ func TestGetWordsBatch_MixedScenario(t *testing.T) {
 	}
 }
 
-func TestGetWordsBatch_BatchVariantFallbackPreservesOrderAndNotFound(t *testing.T) {
+func TestGetWordsBatch_BatchVariantResolutionPreservesOrderAndNotFound(t *testing.T) {
 	cfg := createTestConfig()
 
-	batchFallbackCalls := 0
-	individualFallbackCalls := 0
+	batchVariantCalls := 0
+	individualLookupCalls := 0
 
 	mockRepo := &mockRepository{
 		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
-			individualFallbackCalls++
-			t.Fatalf("unexpected per-word fallback for %q", headword)
-			return nil, nil, errors.New("unexpected per-word fallback")
+			individualLookupCalls++
+			t.Fatalf("unexpected per-word lookup for %q", headword)
+			return nil, nil, errors.New("unexpected per-word lookup")
 		},
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 			return []repository.Word{{ID: 1, Headword: "apple"}}, nil
 		},
 		getWordsByVariantsFunc: func(_ context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error) {
-			batchFallbackCalls++
+			batchVariantCalls++
 			expected := []string{"learnt", "Lit", "missing"}
 			if !reflect.DeepEqual(variants, expected) {
-				t.Fatalf("expected batch fallback variants %v, got %v", expected, variants)
+				t.Fatalf("expected batch entry_forms variants %v, got %v", expected, variants)
 			}
 
 			return []repository.BatchVariantMatch{
 				{
-					Word:    repository.Word{ID: 3, Headword: "Light", FrequencyCount: 120},
-					Variant: repository.WordVariant{WordID: 3, VariantText: "Lit", FrequencyRank: 10, FrequencyCount: 30},
+					Word:    repository.Word{ID: 3, Headword: "Light"},
+					Variant: repository.WordVariant{WordID: 3, FormText: "Lit", RelationKind: model.RelationKindAlias},
 				},
 				{
-					Word:    repository.Word{ID: 2, Headword: "learn", FrequencyCount: 200},
-					Variant: repository.WordVariant{WordID: 2, VariantText: "learnt", FrequencyRank: 0, FrequencyCount: 50},
+					Word:    repository.Word{ID: 2, Headword: "learn"},
+					Variant: repository.WordVariant{WordID: 2, FormText: "learnt", RelationKind: model.RelationKindForm},
 				},
 			}, nil
 		},
@@ -1570,24 +1815,24 @@ func TestGetWordsBatch_BatchVariantFallbackPreservesOrderAndNotFound(t *testing.
 
 	service := NewWordService(mockRepo, cfg)
 
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{
 		Words: []string{"apple", "learnt", "Lit", "missing"},
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if batchFallbackCalls != 1 {
-		t.Fatalf("expected 1 batch fallback call, got %d", batchFallbackCalls)
+	if batchVariantCalls != 1 {
+		t.Fatalf("expected 1 batch entry_forms call, got %d", batchVariantCalls)
 	}
-	if individualFallbackCalls != 0 {
-		t.Fatalf("expected no per-word fallback calls, got %d", individualFallbackCalls)
+	if individualLookupCalls != 0 {
+		t.Fatalf("expected no per-word lookup calls, got %d", individualLookupCalls)
 	}
-	assertBatchVariantFallbackResponses(t, responses)
-	assertBatchVariantFallbackMeta(t, meta)
+	assertBatchVariantResolutionResponses(t, responses)
+	assertBatchVariantResolutionMeta(t, meta)
 }
 
-func assertBatchVariantFallbackResponses(t *testing.T, responses []model.WordResponse) {
+func assertBatchVariantResolutionResponses(t *testing.T, responses []WordResponse) {
 	t.Helper()
 	if len(responses) != 3 {
 		t.Fatalf("Expected 3 responses, got %d", len(responses))
@@ -1601,18 +1846,18 @@ func assertBatchVariantFallbackResponses(t *testing.T, responses []model.WordRes
 	if responses[0].QueriedVariant != nil {
 		t.Fatalf("expected direct match to have no queried_variant, got %#v", responses[0].QueriedVariant)
 	}
-	if responses[1].QueriedVariant == nil || responses[1].QueriedVariant.Text != "learnt" {
+	if responses[1].QueriedVariant == nil || responses[1].QueriedVariant.FormText != "learnt" {
 		t.Fatalf("expected learnt queried_variant metadata, got %#v", responses[1].QueriedVariant)
 	}
-	if responses[1].QueriedVariant.FrequencyRank != 0 {
-		t.Fatalf("expected learnt queried_variant frequency_rank=0, got %#v", responses[1].QueriedVariant)
+	if responses[1].QueriedVariant.RelationKind != model.RelationKindForm {
+		t.Fatalf("expected learnt queried_variant kind=form, got %#v", responses[1].QueriedVariant)
 	}
-	if responses[2].QueriedVariant == nil || responses[2].QueriedVariant.Text != "Lit" {
+	if responses[2].QueriedVariant == nil || responses[2].QueriedVariant.FormText != "Lit" {
 		t.Fatalf("expected Lit queried_variant metadata, got %#v", responses[2].QueriedVariant)
 	}
 }
 
-func assertBatchVariantFallbackMeta(t *testing.T, meta *model.MetaInfo) {
+func assertBatchVariantResolutionMeta(t *testing.T, meta *MetaInfo) {
 	t.Helper()
 	if meta == nil {
 		t.Fatal("Expected meta info, got nil")
@@ -1628,7 +1873,7 @@ func assertBatchVariantFallbackMeta(t *testing.T, meta *model.MetaInfo) {
 	}
 }
 
-func TestGetWordsBatch_BatchVariantFallbackPreservesCaseSelection(t *testing.T) {
+func TestGetWordsBatch_BatchVariantResolutionPreservesCaseSelection(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
@@ -1638,17 +1883,17 @@ func TestGetWordsBatch_BatchVariantFallbackPreservesCaseSelection(t *testing.T) 
 		getWordsByVariantsFunc: func(_ context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error) {
 			expected := []string{"Polish", "POLISH"}
 			if !reflect.DeepEqual(variants, expected) {
-				t.Fatalf("expected batch fallback variants %v, got %v", expected, variants)
+				t.Fatalf("expected batch entry_forms variants %v, got %v", expected, variants)
 			}
 
 			return []repository.BatchVariantMatch{
 				{
 					Word:    repository.Word{ID: 10, Headword: "Polish"},
-					Variant: repository.WordVariant{WordID: 10, VariantText: "Polish"},
+					Variant: repository.WordVariant{WordID: 10, FormText: "Polish"},
 				},
 				{
 					Word:    repository.Word{ID: 11, Headword: "polish"},
-					Variant: repository.WordVariant{WordID: 11, VariantText: "POLISH"},
+					Variant: repository.WordVariant{WordID: 11, FormText: "POLISH"},
 				},
 			}, nil
 		},
@@ -1656,7 +1901,7 @@ func TestGetWordsBatch_BatchVariantFallbackPreservesCaseSelection(t *testing.T) 
 
 	service := NewWordService(mockRepo, cfg)
 
-	responses, meta, err := service.GetWordsBatch(context.Background(), &model.BatchRequest{
+	responses, meta, err := service.GetWordsBatch(context.Background(), &BatchRequest{
 		Words: []string{"Polish", "POLISH"},
 	})
 	if err != nil {
@@ -1670,7 +1915,7 @@ func TestGetWordsBatch_BatchVariantFallbackPreservesCaseSelection(t *testing.T) 
 		t.Fatalf("expected exact-case match 'Polish', got %q", responses[0].Headword)
 	}
 	if responses[1].Headword != "polish" {
-		t.Fatalf("expected lowercase fallback 'polish', got %q", responses[1].Headword)
+		t.Fatalf("expected lowercase match 'polish', got %q", responses[1].Headword)
 	}
 
 	if meta == nil {

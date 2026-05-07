@@ -43,10 +43,10 @@ func TestGetWordsByHeadwords_PropagatesDeadlineToDB(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	mock.ExpectQuery(`SELECT \* FROM "words" WHERE headword_normalized IN \(.*\)`).
+	mock.ExpectQuery(`SELECT \* FROM "entries" WHERE normalized_headword IN \(.*\)`).
 		WithArgs("hello", "world").
 		WillDelayFor(2 * time.Second).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "headword", "headword_normalized"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "headword", "normalized_headword"}))
 
 	_, err := repo.GetWordsByHeadwords(ctx, []string{"Hello", "World"}, false, false, false)
 	if !errors.Is(err, sqlmock.ErrCancelled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -57,17 +57,17 @@ func TestGetWordsByHeadwords_PropagatesDeadlineToDB(t *testing.T) {
 	}
 }
 
-func TestListSlugBootstrapHeadwords_ReturnsCanonicalHeadwords(t *testing.T) {
+func TestListFeaturedCandidateHeadwords_ReturnsQualityFilteredHeadwords(t *testing.T) {
 	repo, mock := newMockRepository(t)
 
-	mock.ExpectQuery(`SELECT "headword" FROM "words" ORDER BY headword ASC`).
+	mock.ExpectQuery(`SELECT .*headword.* FROM "featured_candidates"`).
 		WillReturnRows(sqlmock.NewRows([]string{"headword"}).
 			AddRow("alpha").
 			AddRow("go after"))
 
-	headwords, err := repo.ListSlugBootstrapHeadwords(context.Background())
+	headwords, err := repo.ListFeaturedCandidateHeadwords(context.Background())
 	if err != nil {
-		t.Fatalf("ListSlugBootstrapHeadwords() error = %v", err)
+		t.Fatalf("ListFeaturedCandidateHeadwords() error = %v", err)
 	}
 	if len(headwords) != 2 {
 		t.Fatalf("len(headwords) = %d, want %d", len(headwords), 2)
@@ -77,15 +77,15 @@ func TestListSlugBootstrapHeadwords_ReturnsCanonicalHeadwords(t *testing.T) {
 	}
 }
 
-func TestListSlugBootstrapHeadwords_ReturnsEmptySliceWhenNoRows(t *testing.T) {
+func TestListFeaturedCandidateHeadwords_ReturnsEmptySliceWhenNoRows(t *testing.T) {
 	repo, mock := newMockRepository(t)
 
-	mock.ExpectQuery(`SELECT "headword" FROM "words" ORDER BY headword ASC`).
+	mock.ExpectQuery(`SELECT .*headword.* FROM "featured_candidates"`).
 		WillReturnRows(sqlmock.NewRows([]string{"headword"}))
 
-	headwords, err := repo.ListSlugBootstrapHeadwords(context.Background())
+	headwords, err := repo.ListFeaturedCandidateHeadwords(context.Background())
 	if err != nil {
-		t.Fatalf("ListSlugBootstrapHeadwords() error = %v", err)
+		t.Fatalf("ListFeaturedCandidateHeadwords() error = %v", err)
 	}
 	if len(headwords) != 0 {
 		t.Fatalf("len(headwords) = %d, want %d", len(headwords), 0)
@@ -95,16 +95,16 @@ func TestListSlugBootstrapHeadwords_ReturnsEmptySliceWhenNoRows(t *testing.T) {
 	}
 }
 
-func TestListSlugBootstrapHeadwords_PropagatesDatabaseError(t *testing.T) {
+func TestListFeaturedCandidateHeadwords_PropagatesDatabaseError(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	wantErr := errors.New("db unavailable")
 
-	mock.ExpectQuery(`SELECT "headword" FROM "words" ORDER BY headword ASC`).
+	mock.ExpectQuery(`SELECT .*headword.* FROM "featured_candidates"`).
 		WillReturnError(wantErr)
 
-	_, err := repo.ListSlugBootstrapHeadwords(context.Background())
+	_, err := repo.ListFeaturedCandidateHeadwords(context.Background())
 	if !errors.Is(err, wantErr) {
-		t.Fatalf("ListSlugBootstrapHeadwords() error = %v, want %v", err, wantErr)
+		t.Fatalf("ListFeaturedCandidateHeadwords() error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -113,8 +113,8 @@ func TestSuggestWords_PropagatesDeadlineToRawQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	mock.ExpectQuery(`(?s)WITH combined AS .*SELECT id, frequency_rank.*FROM ranked.*LIMIT \$3`).
-		WithArgs("air%", "air%", 5).
+	mock.ExpectQuery(`(?s)WITH ranked AS .*FROM entry_search_terms t.*SELECT id, frequency_rank.*LIMIT \$3`).
+		WithArgs("air", "ais", 5).
 		WillDelayFor(50 * time.Millisecond).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "frequency_rank"}))
 

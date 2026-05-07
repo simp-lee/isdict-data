@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/simp-lee/isdict-commons/textutil"
+	"github.com/simp-lee/isdict-commons/norm"
 )
 
 const MinQueryLength = 3
@@ -14,7 +14,7 @@ func TrimmedRuneCount(query string) int {
 }
 
 func NormalizedRuneCount(query string) int {
-	return utf8.RuneCountInString(textutil.ToNormalized(query))
+	return utf8.RuneCountInString(norm.NormalizeHeadword(query))
 }
 
 func NormalizeBatchWords(words []string) []string {

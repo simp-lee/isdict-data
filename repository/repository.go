@@ -5,28 +5,127 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/lib/pq"
 	"github.com/simp-lee/isdict-commons/model"
-	"github.com/simp-lee/isdict-commons/textutil"
+	"github.com/simp-lee/isdict-commons/norm"
 	"gorm.io/gorm"
 )
 
-// Type aliases for convenience
-type (
-	Word          = model.Word
-	Pronunciation = model.Pronunciation
-	Sense         = model.Sense
-	Example       = model.Example
-	WordVariant   = model.WordVariant
-)
+// Word is the read model exposed by this data package. It is backed by the
+// commons v1 entries schema and preloads the related v1 tables used by callers.
+type Word struct {
+	ID                 int64     `gorm:"primaryKey;autoIncrement:false;default:(-);type:bigint"`
+	Headword           string    `gorm:"type:text;not null;uniqueIndex:idx_entries_headword_pos_etymology_index,priority:1;index:idx_entries_headword"`
+	NormalizedHeadword string    `gorm:"column:normalized_headword;type:text;not null;index:idx_entries_normalized_headword"`
+	Pos                string    `gorm:"column:pos;type:text;not null;uniqueIndex:idx_entries_headword_pos_etymology_index,priority:2;index:idx_entries_pos"`
+	EtymologyIndex     int       `gorm:"type:integer;not null;default:0;check:etymology_index >= 0;uniqueIndex:idx_entries_headword_pos_etymology_index,priority:3"`
+	IsMultiword        bool      `gorm:"type:boolean;not null;default:false"`
+	SourceRunID        int64     `gorm:"type:bigint;autoIncrement:false;not null;index:idx_entries_source_run_id"`
+	CreatedAt          time.Time `gorm:"type:timestamptz;not null;default:now()"`
+	UpdatedAt          time.Time `gorm:"type:timestamptz;not null;default:now()"`
 
-// Repository provides database access methods
+	SourceRun           *model.ImportRun              `gorm:"foreignKey:SourceRunID;references:ID"`
+	LearningSignal      *model.EntryLearningSignal    `gorm:"foreignKey:EntryID;references:ID"`
+	CEFRSourceSignals   []model.EntryCEFRSourceSignal `gorm:"foreignKey:EntryID;references:ID"`
+	SummariesZH         []model.EntrySummaryZH        `gorm:"foreignKey:EntryID;references:ID"`
+	Etymology           *model.EntryEtymology         `gorm:"foreignKey:EntryID;references:ID"`
+	Pronunciations      []Pronunciation               `gorm:"foreignKey:WordID;references:ID"`
+	PronunciationAudios []PronunciationAudio          `gorm:"foreignKey:WordID;references:ID"`
+	Senses              []Sense                       `gorm:"foreignKey:WordID;references:ID"`
+	WordVariants        []WordVariant                 `gorm:"foreignKey:WordID;references:ID"`
+	LexicalRelations    []model.LexicalRelation       `gorm:"foreignKey:EntryID;references:ID"`
+}
+
+func (Word) TableName() string {
+	return "entries"
+}
+
+// Pronunciation maps the v1 pronunciation_ipas table.
+type Pronunciation struct {
+	ID           int64  `gorm:"primaryKey;autoIncrement:false;default:(-);type:bigint"`
+	WordID       int64  `gorm:"column:entry_id;type:bigint;autoIncrement:false;not null;index:idx_pronunciation_ipas_entry_id_accent_code_display_order,priority:1"`
+	Accent       string `gorm:"column:accent_code;type:text;not null;default:'unknown';index:idx_pronunciation_ipas_entry_id_accent_code_display_order,priority:2"`
+	IPA          string `gorm:"column:ipa;type:text;not null"`
+	IsPrimary    bool   `gorm:"type:boolean;not null;default:false"`
+	DisplayOrder int    `gorm:"type:smallint;not null;default:1;index:idx_pronunciation_ipas_entry_id_accent_code_display_order,priority:3"`
+}
+
+func (Pronunciation) TableName() string {
+	return "pronunciation_ipas"
+}
+
+// PronunciationAudio maps the v1 pronunciation_audios table.
+type PronunciationAudio struct {
+	ID            int64  `gorm:"primaryKey;autoIncrement:false;default:(-);type:bigint"`
+	WordID        int64  `gorm:"column:entry_id;type:bigint;autoIncrement:false;not null;index:idx_pronunciation_audios_entry_id_accent_code_display_order,priority:1"`
+	Accent        string `gorm:"column:accent_code;type:text;not null;default:'unknown';index:idx_pronunciation_audios_entry_id_accent_code_display_order,priority:2"`
+	AudioFilename string `gorm:"column:audio_filename;type:text;not null;index:idx_pronunciation_audios_audio_filename"`
+	IsPrimary     bool   `gorm:"type:boolean;not null;default:false"`
+	DisplayOrder  int    `gorm:"type:smallint;not null;default:1;index:idx_pronunciation_audios_entry_id_accent_code_display_order,priority:3"`
+}
+
+func (PronunciationAudio) TableName() string {
+	return "pronunciation_audios"
+}
+
+// Sense maps the v1 senses table and preloaded gloss/signal rows to the
+// response-friendly shape consumed by service conversions.
+type Sense struct {
+	ID         int64 `gorm:"primaryKey;autoIncrement:false;default:(-);type:bigint"`
+	WordID     int64 `gorm:"column:entry_id;type:bigint;autoIncrement:false;not null;uniqueIndex:idx_senses_entry_id_sense_order,priority:1"`
+	SenseOrder int   `gorm:"type:smallint;not null;check:sense_order >= 1;uniqueIndex:idx_senses_entry_id_sense_order,priority:2"`
+
+	LearningSignal    *model.SenseLearningSignal    `gorm:"foreignKey:SenseID;references:ID"`
+	CEFRSourceSignals []model.SenseCEFRSourceSignal `gorm:"foreignKey:SenseID;references:ID"`
+	GlossesEN         []model.SenseGlossEN          `gorm:"foreignKey:SenseID;references:ID"`
+	GlossesZH         []model.SenseGlossZH          `gorm:"foreignKey:SenseID;references:ID"`
+	Labels            []model.SenseLabel            `gorm:"foreignKey:SenseID;references:ID"`
+	Examples          []Example                     `gorm:"foreignKey:SenseID;references:ID"`
+	LexicalRelations  []model.LexicalRelation       `gorm:"foreignKey:SenseID;references:ID"`
+}
+
+func (Sense) TableName() string {
+	return "senses"
+}
+
+// Example maps the v1 sense_examples table.
+type Example struct {
+	ID           int64  `gorm:"primaryKey;autoIncrement:false;default:(-);type:bigint"`
+	SenseID      int64  `gorm:"type:bigint;autoIncrement:false;not null;uniqueIndex:idx_sense_examples_sense_id_source_example_order,priority:1;index:idx_sense_examples_sense_id_example_order,priority:1"`
+	Source       string `gorm:"type:text;not null;default:'wiktionary';uniqueIndex:idx_sense_examples_sense_id_source_example_order,priority:2"`
+	ExampleOrder int    `gorm:"type:smallint;not null;check:example_order >= 1;uniqueIndex:idx_sense_examples_sense_id_source_example_order,priority:3;index:idx_sense_examples_sense_id_example_order,priority:2"`
+	SentenceEN   string `gorm:"column:sentence_en;type:text;not null"`
+}
+
+func (Example) TableName() string {
+	return "sense_examples"
+}
+
+// WordVariant maps the v1 entry_forms table.
+type WordVariant struct {
+	ID              int64          `gorm:"primaryKey;autoIncrement:false;default:(-);type:bigint"`
+	WordID          int64          `gorm:"column:entry_id;type:bigint;autoIncrement:false;not null;index:idx_entry_forms_entry_id_relation_kind,priority:1"`
+	FormText        string         `gorm:"column:form_text;type:text;not null"`
+	NormalizedForm  string         `gorm:"column:normalized_form;type:text;not null;index:idx_entry_forms_normalized_form"`
+	RelationKind    string         `gorm:"column:relation_kind;type:text;not null;check:relation_kind IN ('form','alias');index:idx_entry_forms_entry_id_relation_kind,priority:2"`
+	FormType        *string        `gorm:"type:text"`
+	SourceRelations pq.StringArray `gorm:"column:source_relations;type:text[];not null;default:'{}'"`
+	DisplayOrder    int            `gorm:"type:smallint;not null;default:1"`
+}
+
+func (WordVariant) TableName() string {
+	return "entry_forms"
+}
+
+// Repository provides database access methods.
 type Repository struct {
 	db *gorm.DB
 }
 
 type searchFilters struct {
-	pos              *int
+	pos              *string
 	cefrLevel        *int
 	oxfordLevel      *int
 	cetLevel         *int
@@ -35,16 +134,32 @@ type searchFilters struct {
 }
 
 type searchResultID struct {
-	ID       uint
+	ID       int64
 	Priority int
 	FreqRank int64
 }
 
 type suggestionResultID struct {
-	ID uint
+	ID int64
 }
 
-// NewRepository creates a new repository instance
+type preloadOptions struct {
+	variants       bool
+	pronunciations bool
+	senses         bool
+	entryDetails   bool
+}
+
+func newPreloadOptions(includeVariants, includePronunciations, includeSenses bool) preloadOptions {
+	return preloadOptions{
+		variants:       includeVariants,
+		pronunciations: includePronunciations,
+		senses:         includeSenses,
+		entryDetails:   includeVariants || includePronunciations || includeSenses,
+	}
+}
+
+// NewRepository creates a new repository instance.
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -56,145 +171,166 @@ func (r *Repository) dbWithContext(ctx context.Context) (*gorm.DB, error) {
 	return r.db.WithContext(ctx), nil
 }
 
-// applyPreloads applies preload configurations to a query based on flags
-// This eliminates code duplication across multiple query methods
-func (r *Repository) applyPreloads(query *gorm.DB, includeVariants, includePronunciations, includeSenses bool) *gorm.DB {
-	if includePronunciations {
-		query = query.Preload("Pronunciations")
-	}
-	if includeSenses {
-		query = query.Preload("Senses.Examples", func(db *gorm.DB) *gorm.DB {
-			return db.Order("example_order ASC")
-		}).Preload("Senses", func(db *gorm.DB) *gorm.DB {
-			return db.Order("sense_order ASC")
+func (r *Repository) applyPreloads(query *gorm.DB, opts preloadOptions) *gorm.DB {
+	query = query.
+		Preload("LearningSignal").
+		Preload("SummariesZH", func(db *gorm.DB) *gorm.DB {
+			return db.Order("updated_at DESC, source ASC")
 		})
+
+	if opts.entryDetails {
+		query = query.
+			Preload("SourceRun").
+			Preload("CEFRSourceSignals", func(db *gorm.DB) *gorm.DB {
+				return db.Order("cefr_source ASC")
+			}).
+			Preload("Etymology")
 	}
-	if includeVariants {
-		query = query.Preload("WordVariants")
+
+	if opts.pronunciations {
+		query = query.
+			Preload("Pronunciations", func(db *gorm.DB) *gorm.DB {
+				return db.Order("accent_code ASC, is_primary DESC, display_order ASC, id ASC")
+			}).
+			Preload("PronunciationAudios", func(db *gorm.DB) *gorm.DB {
+				return db.Order("accent_code ASC, is_primary DESC, display_order ASC, audio_filename ASC, id ASC")
+			})
+	}
+	if opts.senses {
+		query = query.
+			Preload("Senses.LearningSignal").
+			Preload("Senses.CEFRSourceSignals", func(db *gorm.DB) *gorm.DB {
+				return db.Order("cefr_source ASC")
+			}).
+			Preload("Senses.GlossesEN", func(db *gorm.DB) *gorm.DB {
+				return db.Order("gloss_order ASC, id ASC")
+			}).
+			Preload("Senses.GlossesZH", func(db *gorm.DB) *gorm.DB {
+				return db.Order("is_primary DESC, gloss_order ASC, source ASC, id ASC")
+			}).
+			Preload("Senses.Labels", func(db *gorm.DB) *gorm.DB {
+				return db.Order("label_order ASC, label_type ASC, label_code ASC, id ASC")
+			}).
+			Preload("Senses.Examples", func(db *gorm.DB) *gorm.DB {
+				return db.Order("example_order ASC, id ASC")
+			}).
+			Preload("Senses.LexicalRelations", func(db *gorm.DB) *gorm.DB {
+				return db.Order("relation_type ASC, display_order ASC, target_text ASC, id ASC")
+			}).
+			Preload("LexicalRelations", func(db *gorm.DB) *gorm.DB {
+				return db.Where("sense_id IS NULL").Order("relation_type ASC, display_order ASC, target_text ASC, id ASC")
+			}).
+			Preload("Senses", func(db *gorm.DB) *gorm.DB {
+				return db.Order("sense_order ASC, id ASC")
+			})
+	}
+	if opts.variants {
+		query = query.Preload("WordVariants", func(db *gorm.DB) *gorm.DB {
+			return db.Order("relation_kind ASC, display_order ASC, form_text ASC, id ASC")
+		})
 	}
 	return query
 }
 
-// GetWordByHeadword retrieves a word by its headword with automatic fallback to variants
-// Step 1: Try exact case-sensitive match on headword field
-// Step 2: If not found, try normalized match (case-insensitive) with preference for lowercase
-// Step 3: If still not found, search word_variants table
-// Step 4: Return the main word associated with the variant
-// Returns: (*Word, *WordVariant, error)
-//   - Word: the main word entry
-//   - WordVariant: nil if directly matched, or the matched variant if found via variant lookup
+func entryQualityOrder(entryAlias, learningAlias string) string {
+	return fmt.Sprintf(
+		"CASE WHEN COALESCE(%[2]s.frequency_rank, 0) = 0 THEN 999999 ELSE %[2]s.frequency_rank END ASC, COALESCE(%[2]s.cefr_level, 0) DESC, %[1]s.id ASC",
+		entryAlias,
+		learningAlias,
+	)
+}
+
+// GetWordByHeadword resolves an entry by headword or by matching entry_forms.
 func (r *Repository) GetWordByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*Word, *WordVariant, error) {
-	normalizedHeadword := textutil.ToNormalized(headword)
+	normalizedHeadword := norm.NormalizeHeadword(headword)
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// ============ Step 1: Try exact case-sensitive match first ============
-	// Use headword field directly (case-sensitive in PostgreSQL)
-	// Example: 'Polish' (proper noun) vs 'polish' (verb) are treated as different words
 	var word Word
-	query := db.Where("headword = ?", headword)
-	query = r.applyPreloads(query, includeVariants, includePronunciations, includeSenses)
+	query := db.Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entries.headword = ?", headword).
+		Order(entryQualityOrder("entries", "els"))
+	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
 
 	err = query.First(&word).Error
 	if err == nil {
-		return &word, nil, nil // Exact case-sensitive match found
+		return &word, nil, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil, err // Database error
-	}
-
-	// ============ Step 2: Try normalized match (case-insensitive) ============
-	// If exact match fails, search by normalized form to handle case variations
-	// Prefer lowercase variants (common words) over capitalized ones (proper nouns)
-	query = db.Where("headword_normalized = ?", normalizedHeadword)
-	query = r.applyPreloads(query, includeVariants, includePronunciations, includeSenses)
-	query = query.Order("CASE WHEN headword = LOWER(headword) THEN 0 ELSE 1 END, id ASC")
-
-	err = query.First(&word).Error
-	if err == nil {
-		return &word, nil, nil // Main word found by normalized form
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil, err // Database error
-	}
-
-	// ============ Step 3: Search word_variants table ============
-	// Main word not found, search in variants table using normalized form
-	// Join with words table to sort by quality metrics (frequency, CEFR level)
-	var variant WordVariant
-	variantRanking := `word_variants.kind ASC,
-	       CASE WHEN words.frequency_rank = 0 THEN 999999 ELSE words.frequency_rank END ASC,
-	       words.cefr_level DESC,
-	       word_variants.word_id ASC`
-	err = db.
-		Select("word_variants.*").
-		Joins("INNER JOIN words ON word_variants.word_id = words.id").
-		Where("word_variants.variant_text = ?", headword).
-		Order(variantRanking).
-		First(&variant).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil, err // Database error
-	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		err = db.
-			Select("word_variants.*").
-			Joins("INNER JOIN words ON word_variants.word_id = words.id").
-			Where("word_variants.headword_normalized = ?", normalizedHeadword).
-			Order(variantRanking).
-			First(&variant).Error
-	}
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil, ErrWordNotFound // Not found in both tables
-		}
-		return nil, nil, err // Database error
-	}
-
-	// ============ Step 4: Found variant, retrieve the main word ============
-	query = db.Where("id = ?", variant.WordID)
-	query = r.applyPreloads(query, includeVariants, includePronunciations, includeSenses)
-
-	if err := query.First(&word).Error; err != nil {
 		return nil, nil, err
 	}
 
-	return &word, &variant, nil // Main word found via variant
+	query = db.Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entries.normalized_headword = ?", normalizedHeadword).
+		Order("CASE WHEN entries.headword = LOWER(entries.headword) THEN 0 ELSE 1 END ASC").
+		Order(entryQualityOrder("entries", "els"))
+	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
+
+	err = query.First(&word).Error
+	if err == nil {
+		return &word, nil, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, err
+	}
+
+	var variant WordVariant
+	variantRanking := `CASE WHEN entry_forms.form_text = ? THEN 0 ELSE 1 END ASC,
+	       entry_forms.relation_kind ASC,
+	       CASE WHEN COALESCE(els.frequency_rank, 0) = 0 THEN 999999 ELSE els.frequency_rank END ASC,
+	       COALESCE(els.cefr_level, 0) DESC,
+	       entry_forms.entry_id ASC`
+	err = db.
+		Select("entry_forms.*").
+		Joins("INNER JOIN entries ON entry_forms.entry_id = entries.id").
+		Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entry_forms.normalized_form = ?", normalizedHeadword).
+		Order(gorm.Expr(variantRanking, headword)).
+		First(&variant).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrWordNotFound
+		}
+		return nil, nil, err
+	}
+
+	loaded, err := r.loadWordsByIDs(db, []int64{variant.WordID}, includeVariants, includePronunciations, includeSenses)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(loaded) == 0 {
+		return nil, nil, ErrWordNotFound
+	}
+
+	return &loaded[0], &variant, nil
 }
 
-// GetWordsByVariant finds words by variant text using normalized form matching.
-// Normalization ignores spaces, hyphens, and case, but preserves apostrophes and slashes.
-func (r *Repository) GetWordsByVariant(ctx context.Context, variant string, kind *int, includePronunciations, includeSenses bool) ([]Word, []WordVariant, error) {
+// GetWordsByVariant finds entries by form/alias text using normalized matching.
+func (r *Repository) GetWordsByVariant(ctx context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]Word, []WordVariant, error) {
 	var variants []WordVariant
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Use normalized form for matching
-	variantNormalized := textutil.ToNormalized(variant)
-
-	query := db.Where("headword_normalized = ?", variantNormalized)
-
+	variantNormalized := norm.NormalizeHeadword(variant)
+	query := db.Where("normalized_form = ?", variantNormalized)
 	if kind != nil {
-		query = query.Where("kind = ?", *kind)
+		query = query.Where("relation_kind = ?", *kind)
 	}
+	query = query.Order("relation_kind ASC, COALESCE(form_type, '') ASC, form_text ASC, id ASC")
 
-	query = query.Order("kind ASC, COALESCE(form_type, 0) ASC, variant_text ASC")
-
-	err = query.Find(&variants).Error
-	if err != nil {
+	if err := query.Find(&variants).Error; err != nil {
 		return nil, nil, err
 	}
-
 	if len(variants) == 0 {
 		return nil, nil, ErrVariantNotFound
 	}
 
-	// Get unique word IDs
-	idSet := make(map[uint]struct{}, len(variants))
-	wordIDs := make([]uint, 0, len(variants))
+	idSet := make(map[int64]struct{}, len(variants))
+	wordIDs := make([]int64, 0, len(variants))
 	for _, v := range variants {
 		if _, exists := idSet[v.WordID]; exists {
 			continue
@@ -203,12 +339,7 @@ func (r *Repository) GetWordsByVariant(ctx context.Context, variant string, kind
 		wordIDs = append(wordIDs, v.WordID)
 	}
 
-	// Fetch words with only the relations the caller asked for.
-	var words []Word
-	query = db.Where("id IN ?", wordIDs)
-	query = r.applyPreloads(query, false, includePronunciations, includeSenses)
-	err = query.Order("CASE WHEN frequency_rank = 0 THEN 999999 ELSE frequency_rank END ASC, headword ASC").Find(&words).Error
-
+	words, err := r.loadWordsByIDs(db, wordIDs, false, includePronunciations, includeSenses)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -216,9 +347,7 @@ func (r *Repository) GetWordsByVariant(ctx context.Context, variant string, kind
 	return words, variants, nil
 }
 
-// GetWordsByVariants resolves multiple variant headwords in one query.
-// It de-duplicates normalized forms for the SQL lookup, then maps results back to
-// the original request order so each successful input gets its own word/variant match.
+// GetWordsByVariants resolves multiple form/alias headwords in one query.
 func (r *Repository) GetWordsByVariants(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]BatchVariantMatch, error) {
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
@@ -235,37 +364,33 @@ func (r *Repository) GetWordsByVariants(ctx context.Context, variants []string, 
 
 	var rankedVariants []WordVariant
 	err = db.
-		Select("word_variants.*").
-		Joins("INNER JOIN words ON word_variants.word_id = words.id").
-		Where("word_variants.headword_normalized IN ?", normalizedForms).
-		Order(`word_variants.headword_normalized ASC,
-		       word_variants.kind ASC,
-		       CASE WHEN words.frequency_rank = 0 THEN 999999 ELSE words.frequency_rank END ASC,
-		       words.cefr_level DESC,
-		       word_variants.word_id ASC`).
+		Select("entry_forms.*").
+		Joins("INNER JOIN entries ON entry_forms.entry_id = entries.id").
+		Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entry_forms.normalized_form IN ?", normalizedForms).
+		Order(`entry_forms.normalized_form ASC,
+		       entry_forms.relation_kind ASC,
+		       CASE WHEN COALESCE(els.frequency_rank, 0) = 0 THEN 999999 ELSE els.frequency_rank END ASC,
+		       COALESCE(els.cefr_level, 0) DESC,
+		       entry_forms.entry_id ASC`).
 		Find(&rankedVariants).Error
 	if err != nil {
 		return nil, err
 	}
-
 	if len(rankedVariants) == 0 {
 		return []BatchVariantMatch{}, nil
 	}
 
 	variantsByNormalized, wordIDs := groupVariantsByNormalized(rankedVariants, len(normalizedForms))
-
-	var words []Word
-	query := db.Where("id IN ?", wordIDs)
-	query = r.applyPreloads(query, includeVariants, includePronunciations, includeSenses)
-	if err := query.Find(&words).Error; err != nil {
+	words, err := r.loadWordsByIDs(db, wordIDs, includeVariants, includePronunciations, includeSenses)
+	if err != nil {
 		return nil, err
 	}
 
 	return buildBatchVariantMatches(variants, normalizedInputs, variantsByNormalized, indexWordsByID(words)), nil
 }
 
-// GetWordsByHeadwords retrieves multiple words by their headwords (batch query)
-// Uses headword_normalized for matching, only queries main words table
+// GetWordsByHeadwords retrieves multiple entries by normalized headword.
 func (r *Repository) GetWordsByHeadwords(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]Word, error) {
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
@@ -275,16 +400,14 @@ func (r *Repository) GetWordsByHeadwords(ctx context.Context, headwords []string
 		return []Word{}, nil
 	}
 
-	// Convert to normalized forms
 	normalizedForms := make([]string, len(headwords))
 	for i, hw := range headwords {
-		normalizedForms[i] = textutil.ToNormalized(hw)
+		normalizedForms[i] = norm.NormalizeHeadword(hw)
 	}
 
 	var words []Word
-	query := db.Where("headword_normalized IN ?", normalizedForms)
-	query = r.applyPreloads(query, includeVariants, includePronunciations, includeSenses)
-
+	query := db.Where("normalized_headword IN ?", normalizedForms)
+	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
 	if err := query.Find(&words).Error; err != nil {
 		return nil, err
 	}
@@ -292,17 +415,43 @@ func (r *Repository) GetWordsByHeadwords(ctx context.Context, headwords []string
 	return words, nil
 }
 
-// ListSlugBootstrapHeadwords returns the canonical headwords used to build a
-// slug index during application startup.
-func (r *Repository) ListSlugBootstrapHeadwords(ctx context.Context) ([]string, error) {
+func (r *Repository) loadWordsByIDs(db *gorm.DB, wordIDs []int64, includeVariants, includePronunciations, includeSenses bool) ([]Word, error) {
+	if len(wordIDs) == 0 {
+		return []Word{}, nil
+	}
+
+	var words []Word
+	query := db.Where("id IN ?", wordIDs)
+	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
+	if err := query.Find(&words).Error; err != nil {
+		return nil, err
+	}
+
+	wordByID := make(map[int64]*Word, len(words))
+	for i := range words {
+		wordByID[words[i].ID] = &words[i]
+	}
+
+	ordered := make([]Word, 0, len(wordIDs))
+	for _, id := range wordIDs {
+		if word, ok := wordByID[id]; ok {
+			ordered = append(ordered, *word)
+		}
+	}
+
+	return ordered, nil
+}
+
+// ListFeaturedCandidateHeadwords returns headwords with learning signals for featured recommendations.
+func (r *Repository) ListFeaturedCandidateHeadwords(ctx context.Context) ([]string, error) {
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	headwords := make([]string, 0)
-	if err := db.Model(&Word{}).
-		Order("headword ASC").
+	headwords := make([]string, 0, 70000)
+	if err := db.
+		Table("featured_candidates").
 		Pluck("headword", &headwords).Error; err != nil {
 		return nil, err
 	}
@@ -310,15 +459,16 @@ func (r *Repository) ListSlugBootstrapHeadwords(ctx context.Context) ([]string, 
 	return headwords, nil
 }
 
-// escapeLikePattern escapes SQL LIKE wildcard characters to prevent user input from being interpreted as wildcards
+// escapeLikePattern escapes SQL LIKE wildcard characters to prevent user input
+// from being interpreted as wildcards.
 func escapeLikePattern(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\") // Must be first to avoid double-escaping
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "%", "\\%")
 	s = strings.ReplaceAll(s, "_", "\\_")
 	return s
 }
 
-func newSearchFilters(pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int) searchFilters {
+func newSearchFilters(pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int) searchFilters {
 	return searchFilters{
 		pos:              pos,
 		cefrLevel:        cefrLevel,
@@ -329,31 +479,62 @@ func newSearchFilters(pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int,
 	}
 }
 
-func (filters searchFilters) clauses(textAlias, wordAlias string) []string {
-	clauses := []string{fmt.Sprintf("%s.headword_normalized LIKE ?", textAlias)}
+func (filters searchFilters) searchTermFuzzyClauses(alias string) []string {
+	return filters.appendSearchTermFilterClauses([]string{fmt.Sprintf("%s.normalized_term LIKE ?", alias)}, alias)
+}
+
+func (filters searchFilters) searchTermPrefixRangeClauses(alias, prefix, lower, upper string) ([]string, []interface{}) {
+	if lower != "" && upper != "" {
+		clauses := []string{fmt.Sprintf("%[1]s.normalized_term >= ? AND %[1]s.normalized_term < ?", alias)}
+		clauses = filters.appendSearchTermFilterClauses(clauses, alias)
+		return clauses, filters.argsWithPrefix(lower, upper)
+	}
+
+	pattern := escapeLikePattern(prefix) + "%"
+	return filters.searchTermFuzzyClauses(alias), filters.args(pattern)
+}
+
+func (filters searchFilters) matchesNothing() bool {
+	return filters.maxFrequencyRank != nil && *filters.maxFrequencyRank <= 0
+}
+
+func positiveFilter(value *int) bool {
+	return value != nil && *value > 0
+}
+
+func (filters searchFilters) appendSearchTermFilterClauses(clauses []string, alias string) []string {
 	if filters.cefrLevel != nil {
-		clauses = append(clauses, fmt.Sprintf("%s.cefr_level = ?", wordAlias))
+		clauses = append(clauses, fmt.Sprintf("%s.cefr_level = ?", alias))
 	}
 	if filters.oxfordLevel != nil {
-		clauses = append(clauses, fmt.Sprintf("%s.oxford_level = ?", wordAlias))
+		clauses = append(clauses, fmt.Sprintf("%s.oxford_level = ?", alias))
 	}
 	if filters.cetLevel != nil {
-		clauses = append(clauses, fmt.Sprintf("%s.cet_level = ?", wordAlias))
+		clauses = append(clauses, fmt.Sprintf("%s.cet_level = ?", alias))
 	}
-	if filters.maxFrequencyRank != nil {
-		clauses = append(clauses, fmt.Sprintf("%s.frequency_rank > 0 AND %s.frequency_rank <= ?", wordAlias, wordAlias))
+	if positiveFilter(filters.maxFrequencyRank) {
+		clauses = append(clauses, fmt.Sprintf("%s.frequency_rank > 0 AND %s.frequency_rank <= ?", alias, alias))
 	}
-	if filters.minCollinsStars != nil {
-		clauses = append(clauses, fmt.Sprintf("%s.collins_stars >= ?", wordAlias))
+	if positiveFilter(filters.minCollinsStars) {
+		clauses = append(clauses, fmt.Sprintf("%s.collins_stars >= ?", alias))
 	}
 	if filters.pos != nil {
-		clauses = append(clauses, fmt.Sprintf("EXISTS (SELECT 1 FROM senses s WHERE s.word_id = %s.id AND s.pos = ?)", wordAlias))
+		clauses = append(clauses, fmt.Sprintf("%s.pos = ?", alias))
 	}
 	return clauses
 }
 
+func (filters searchFilters) argsWithPrefix(lower, upper string) []interface{} {
+	args := []interface{}{lower, upper}
+	return filters.appendFilterArgs(args)
+}
+
 func (filters searchFilters) args(pattern string) []interface{} {
 	args := []interface{}{pattern}
+	return filters.appendFilterArgs(args)
+}
+
+func (filters searchFilters) appendFilterArgs(args []interface{}) []interface{} {
 	if filters.cefrLevel != nil {
 		args = append(args, *filters.cefrLevel)
 	}
@@ -363,16 +544,36 @@ func (filters searchFilters) args(pattern string) []interface{} {
 	if filters.cetLevel != nil {
 		args = append(args, *filters.cetLevel)
 	}
-	if filters.maxFrequencyRank != nil {
+	if positiveFilter(filters.maxFrequencyRank) {
 		args = append(args, *filters.maxFrequencyRank)
 	}
-	if filters.minCollinsStars != nil {
+	if positiveFilter(filters.minCollinsStars) {
 		args = append(args, *filters.minCollinsStars)
 	}
 	if filters.pos != nil {
 		args = append(args, *filters.pos)
 	}
 	return args
+}
+
+func normalizedPrefixRange(prefix string) (string, string) {
+	if prefix == "" {
+		return "", ""
+	}
+	for _, r := range prefix {
+		if r > 0x7f {
+			return "", ""
+		}
+	}
+	bytes := []byte(prefix)
+	for i := len(bytes) - 1; i >= 0; i-- {
+		if bytes[i] < 0x7f {
+			upper := append([]byte(nil), bytes[:i+1]...)
+			upper[i]++
+			return prefix, string(upper)
+		}
+	}
+	return "", ""
 }
 
 func appendArgSets(argSets ...[]interface{}) []interface{} {
@@ -388,7 +589,7 @@ func normalizeUniqueInputs(inputs []string) ([]string, []string) {
 	normalizedForms := make([]string, 0, len(inputs))
 	seenNormalized := make(map[string]struct{}, len(inputs))
 	for i, input := range inputs {
-		normalized := textutil.ToNormalized(input)
+		normalized := norm.NormalizeHeadword(input)
 		normalizedInputs[i] = normalized
 		if normalized == "" {
 			continue
@@ -402,12 +603,12 @@ func normalizeUniqueInputs(inputs []string) ([]string, []string) {
 	return normalizedInputs, normalizedForms
 }
 
-func groupVariantsByNormalized(rankedVariants []WordVariant, capacity int) (map[string][]WordVariant, []uint) {
+func groupVariantsByNormalized(rankedVariants []WordVariant, capacity int) (map[string][]WordVariant, []int64) {
 	variantsByNormalized := make(map[string][]WordVariant, capacity)
-	selectedWordIDs := make(map[uint]struct{}, len(rankedVariants))
-	wordIDs := make([]uint, 0, len(rankedVariants))
+	selectedWordIDs := make(map[int64]struct{}, len(rankedVariants))
+	wordIDs := make([]int64, 0, len(rankedVariants))
 	for _, variant := range rankedVariants {
-		variantsByNormalized[variant.HeadwordNormalized] = append(variantsByNormalized[variant.HeadwordNormalized], variant)
+		variantsByNormalized[variant.NormalizedForm] = append(variantsByNormalized[variant.NormalizedForm], variant)
 		if _, exists := selectedWordIDs[variant.WordID]; exists {
 			continue
 		}
@@ -417,8 +618,8 @@ func groupVariantsByNormalized(rankedVariants []WordVariant, capacity int) (map[
 	return variantsByNormalized, wordIDs
 }
 
-func indexWordsByID(words []Word) map[uint]Word {
-	indexed := make(map[uint]Word, len(words))
+func indexWordsByID(words []Word) map[int64]Word {
+	indexed := make(map[int64]Word, len(words))
 	for _, word := range words {
 		indexed[word.ID] = word
 	}
@@ -430,14 +631,14 @@ func selectVariantCandidate(candidates []WordVariant, input string) (WordVariant
 		return WordVariant{}, false
 	}
 	for _, candidate := range candidates {
-		if candidate.VariantText == input {
+		if candidate.FormText == input {
 			return candidate, true
 		}
 	}
 	return candidates[0], true
 }
 
-func buildBatchVariantMatches(inputs []string, normalizedInputs []string, variantsByNormalized map[string][]WordVariant, wordsByID map[uint]Word) []BatchVariantMatch {
+func buildBatchVariantMatches(inputs []string, normalizedInputs []string, variantsByNormalized map[string][]WordVariant, wordsByID map[int64]Word) []BatchVariantMatch {
 	matches := make([]BatchVariantMatch, 0, len(inputs))
 	for i, input := range inputs {
 		normalized := normalizedInputs[i]
@@ -457,10 +658,9 @@ func buildBatchVariantMatches(inputs []string, normalizedInputs []string, varian
 	return matches
 }
 
-// SearchWords performs fuzzy search on words using headword_normalized
-// Optimized with UNION strategy to avoid slow LEFT JOIN full table scans
-func (r *Repository) SearchWords(ctx context.Context, keyword string, pos *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]Word, int64, error) {
-	normalizedKeyword := textutil.ToNormalized(keyword)
+// SearchWords performs fuzzy search through the entry_search_terms read model.
+func (r *Repository) SearchWords(ctx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]Word, int64, error) {
+	normalizedKeyword := norm.NormalizeHeadword(keyword)
 	escaped := escapeLikePattern(normalizedKeyword)
 	prefix := escaped + "%"
 	fuzzy := "%" + escaped + "%"
@@ -469,265 +669,169 @@ func (r *Repository) SearchWords(ctx context.Context, keyword string, pos *int, 
 		return nil, 0, err
 	}
 	filters := newSearchFilters(pos, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars)
-	wordPrefixFilters := filters.clauses("w", "w")
-	wordFuzzyFilters := filters.clauses("w", "w")
-	variantPrefixFilters := filters.clauses("v", "w")
-	variantFuzzyFilters := filters.clauses("v", "w")
+	if filters.matchesNothing() {
+		return []Word{}, 0, nil
+	}
+	fuzzyFilters := filters.searchTermFuzzyClauses("t")
 
-	// Build COUNT query with all 4 UNION branches
 	countSQL := fmt.Sprintf(`
-		SELECT COUNT(DISTINCT id) FROM (
-			SELECT w.id FROM words w WHERE %s
-			UNION
-			SELECT w.id FROM words w WHERE %s
-			UNION
-			SELECT word_id AS id FROM word_variants v
-			INNER JOIN words w ON v.word_id = w.id
-			WHERE %s
-			UNION
-			SELECT word_id AS id FROM word_variants v
-			INNER JOIN words w ON v.word_id = w.id
-			WHERE %s
-		) AS matched
+		SELECT COUNT(DISTINCT t.entry_id)
+		FROM entry_search_terms t
+		WHERE %s
 	`,
-		strings.Join(wordPrefixFilters, " AND "),
-		strings.Join(wordFuzzyFilters, " AND "),
-		strings.Join(variantPrefixFilters, " AND "),
-		strings.Join(variantFuzzyFilters, " AND "),
+		strings.Join(fuzzyFilters, " AND "),
 	)
 
-	prefixArgs := filters.args(prefix)
 	fuzzyArgs := filters.args(fuzzy)
-	countArgs := appendArgSets(prefixArgs, fuzzyArgs, prefixArgs, fuzzyArgs)
 
 	var total int64
-	if err := db.Raw(countSQL, countArgs...).Scan(&total).Error; err != nil {
+	if err := db.Raw(countSQL, fuzzyArgs...).Scan(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	if total == 0 {
 		return []Word{}, 0, nil
 	}
 
-	// Step 2: Get paginated results with priority ordering
+	results, err := querySearchResultIDs(db, prefix, fuzzyFilters, fuzzyArgs, limit, offset, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(results) < limit {
+		results, err = querySearchResultIDs(db, prefix, fuzzyFilters, fuzzyArgs, limit, offset, false)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	if len(results) == 0 {
+		return []Word{}, total, nil
+	}
+
+	wordIDs := make([]int64, len(results))
+	for i, result := range results {
+		wordIDs[i] = result.ID
+	}
+
+	words, err := r.loadWordsByIDs(db, wordIDs, false, false, false)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return words, total, nil
+}
+
+func querySearchResultIDs(db *gorm.DB, prefix string, fuzzyFilters []string, fuzzyArgs []interface{}, limit, offset int, positiveFrequencyOnly bool) ([]searchResultID, error) {
+	clauses := append([]string(nil), fuzzyFilters...)
+	if positiveFrequencyOnly {
+		clauses = append(clauses, "t.frequency_rank > 0")
+	}
+
 	pageSQL := fmt.Sprintf(`
-		WITH combined AS (
-			SELECT 
-				w.id,
-				1 AS priority,
-				CASE WHEN w.frequency_rank = 0 THEN 999999 ELSE w.frequency_rank END AS freq_rank,
-				w.headword
-			FROM words w
-			WHERE %s
-			UNION ALL
-			SELECT 
-				w.id,
-				3 AS priority,
-				CASE WHEN w.frequency_rank = 0 THEN 999999 ELSE w.frequency_rank END AS freq_rank,
-				w.headword
-			FROM words w
-			WHERE %s
-			UNION ALL
-			SELECT 
-				v.word_id AS id,
-				2 AS priority,
-				CASE WHEN w.frequency_rank = 0 THEN 999999 ELSE w.frequency_rank END AS freq_rank,
-				w.headword
-			FROM word_variants v
-			INNER JOIN words w ON v.word_id = w.id
-			WHERE %s
-			UNION ALL
-			SELECT 
-				v.word_id AS id,
-				4 AS priority,
-				CASE WHEN w.frequency_rank = 0 THEN 999999 ELSE w.frequency_rank END AS freq_rank,
-				w.headword
-			FROM word_variants v
-			INNER JOIN words w ON v.word_id = w.id
-			WHERE %s
-		), ranked AS (
-			SELECT 
-				id,
-				priority,
-				freq_rank,
-				headword,
+		WITH ranked AS (
+			SELECT
+				t.entry_id AS id,
+				CASE WHEN t.normalized_term LIKE ? THEN t.term_rank ELSE t.term_rank + 2 END AS priority,
+				CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS freq_rank,
+				t.headword,
 				ROW_NUMBER() OVER (
-					PARTITION BY id
-					ORDER BY freq_rank ASC, priority ASC, headword ASC
+					PARTITION BY t.entry_id
+					ORDER BY
+						CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END ASC,
+						CASE WHEN t.normalized_term LIKE ? THEN t.term_rank ELSE t.term_rank + 2 END ASC,
+						t.headword ASC
 				) AS rn
-			FROM combined
+			FROM entry_search_terms t
+			WHERE %s
 		)
 		SELECT id, priority, freq_rank
 		FROM ranked
 		WHERE rn = 1
 		ORDER BY freq_rank ASC, priority ASC, headword ASC
-		LIMIT ? OFFSET ?
-	`,
-		strings.Join(wordPrefixFilters, " AND "),
-		strings.Join(wordFuzzyFilters, " AND "),
-		strings.Join(variantPrefixFilters, " AND "),
-		strings.Join(variantFuzzyFilters, " AND "),
+			LIMIT ? OFFSET ?
+		`,
+		strings.Join(clauses, " AND "),
 	)
 
-	pageArgs := append(appendArgSets(prefixArgs, fuzzyArgs, prefixArgs, fuzzyArgs), limit, offset)
-
+	pageArgs := append(appendArgSets([]interface{}{prefix, prefix}, fuzzyArgs), limit, offset)
 	var results []searchResultID
 	if err := db.Raw(pageSQL, pageArgs...).Scan(&results).Error; err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-
-	if len(results) == 0 {
-		return []Word{}, total, nil
-	}
-
-	// Extract IDs (already deduplicated by SQL ROW_NUMBER)
-	wordIDs := make([]uint, len(results))
-	for i, r := range results {
-		wordIDs[i] = r.ID
-	}
-
-	// Fetch full word objects
-	var words []Word
-	if err := db.Where("id IN ?", wordIDs).Find(&words).Error; err != nil {
-		return nil, 0, err
-	}
-
-	// Load distinct POS values for each word
-	type posRow struct {
-		WordID uint
-		POS    int
-	}
-
-	var posRows []posRow
-	posQuery := db.Table("senses").
-		Select("word_id, pos").
-		Where("word_id IN ?", wordIDs)
-	if pos != nil {
-		posQuery = posQuery.Where("pos = ?", *pos)
-	}
-	if err := posQuery.
-		Group("word_id, pos").
-		Find(&posRows).Error; err != nil {
-		return nil, 0, err
-	}
-
-	posMap := make(map[uint][]Sense, len(wordIDs))
-	for _, row := range posRows {
-		posMap[row.WordID] = append(posMap[row.WordID], Sense{POS: row.POS})
-	}
-
-	// Build word map for reordering
-	wordByID := make(map[uint]*Word, len(words))
-	for i := range words {
-		if senses, ok := posMap[words[i].ID]; ok {
-			words[i].Senses = senses
-		} else {
-			words[i].Senses = []Sense{}
-		}
-		wordByID[words[i].ID] = &words[i]
-	}
-
-	// Re-order words to match the query result order
-	orderedWords := make([]Word, 0, len(wordIDs))
-	for _, id := range wordIDs {
-		if w, ok := wordByID[id]; ok {
-			orderedWords = append(orderedWords, *w)
-		}
-	}
-
-	return orderedWords, total, nil
+	return results, nil
 }
 
-// SuggestWords provides autocomplete suggestions using headword_normalized
+// SuggestWords provides autocomplete suggestions through the entry_search_terms read model.
 func (r *Repository) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]Word, error) {
-	normalizedPrefix := textutil.ToNormalized(prefix)
-	escaped := escapeLikePattern(normalizedPrefix) + "%"
+	normalizedPrefix := norm.NormalizeHeadword(prefix)
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	filters := newSearchFilters(nil, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars)
-	wordFilters := strings.Join(filters.clauses("w", "w"), " AND ")
-	variantFilters := strings.Join(filters.clauses("v", "w"), " AND ")
+	if filters.matchesNothing() {
+		return []Word{}, nil
+	}
 
-	// Optimization: Use UNION ALL + ROW_NUMBER for efficient deduplication
-	// This is faster than UNION which compares all columns
+	results, err := querySuggestionIDs(db, normalizedPrefix, filters, limit, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) < limit {
+		results, err = querySuggestionIDs(db, normalizedPrefix, filters, limit, false)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r.loadSuggestionResults(db, results)
+}
 
-	// Build the UNION ALL query with window function for deduplication
-	// Note: Use CASE to treat frequency_rank=0 as lowest priority (999999)
+func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilters, limit int, positiveFrequencyOnly bool) ([]suggestionResultID, error) {
+	prefixLower, prefixUpper := normalizedPrefixRange(normalizedPrefix)
+	clauses, args := filters.searchTermPrefixRangeClauses("t", normalizedPrefix, prefixLower, prefixUpper)
+	if positiveFrequencyOnly {
+		clauses = append(clauses, "t.frequency_rank > 0")
+	}
+
 	unionSQL := fmt.Sprintf(`
-		WITH combined AS (
-			SELECT 
-				id, 
-				CASE WHEN frequency_rank = 0 THEN 999999 ELSE frequency_rank END AS frequency_rank
-			FROM words w
-			WHERE %s
-			UNION ALL
-			SELECT 
-				word_id AS id, 
-				CASE WHEN w.frequency_rank = 0 THEN 999999 ELSE w.frequency_rank END AS frequency_rank
-			FROM word_variants v
-			INNER JOIN words w ON v.word_id = w.id
-			WHERE %s
-		), ranked AS (
-			SELECT 
-				id,
-				frequency_rank,
+		WITH ranked AS (
+			SELECT
+				t.entry_id AS id,
+				CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS frequency_rank,
 				ROW_NUMBER() OVER (
-					PARTITION BY id
-					ORDER BY frequency_rank ASC, id ASC
+					PARTITION BY t.entry_id
+					ORDER BY
+						CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END ASC,
+						t.entry_id ASC
 				) AS rn
-			FROM combined
+			FROM entry_search_terms t
+			WHERE %s
 		)
 		SELECT id, frequency_rank
 		FROM ranked
-		WHERE rn = 1
-		ORDER BY frequency_rank ASC, id ASC
-		LIMIT ?
-	`, wordFilters, variantFilters)
+			WHERE rn = 1
+			ORDER BY frequency_rank ASC, id ASC
+			LIMIT ?
+		`, strings.Join(clauses, " AND "))
 
-	args := append(appendArgSets(filters.args(escaped), filters.args(escaped)), limit)
-
+	args = append(args, limit)
 	var results []suggestionResultID
 	if err := db.Raw(unionSQL, args...).Scan(&results).Error; err != nil {
 		return nil, err
 	}
+	return results, nil
+}
 
+func (r *Repository) loadSuggestionResults(db *gorm.DB, results []suggestionResultID) ([]Word, error) {
 	if len(results) == 0 {
 		return []Word{}, nil
 	}
-
-	// Extract IDs (already deduplicated by SQL ROW_NUMBER)
-	wordIDs := make([]uint, len(results))
-	for i, r := range results {
-		wordIDs[i] = r.ID
+	wordIDs := make([]int64, len(results))
+	for i, result := range results {
+		wordIDs[i] = result.ID
 	}
-
-	// Fetch full word objects, preserving the order from the query
-	var words []Word
-	if err := db.Where("id IN ?", wordIDs).Find(&words).Error; err != nil {
-		return nil, err
-	}
-
-	// Re-order words to match the order from the UNION query
-	// This is necessary because IN clause doesn't preserve order
-	wordByID := make(map[uint]*Word, len(words))
-	for i := range words {
-		wordByID[words[i].ID] = &words[i]
-	}
-
-	orderedWords := make([]Word, 0, len(wordIDs))
-	for _, id := range wordIDs {
-		if w, ok := wordByID[id]; ok {
-			orderedWords = append(orderedWords, *w)
-		}
-	}
-
-	return orderedWords, nil
+	return r.loadWordsByIDs(db, wordIDs, false, false, false)
 }
 
-// SearchPhrases searches for phrases containing the keyword as a complete word
-// A phrase is defined as a headword containing spaces
-// The keyword must match as a complete word (word boundary matching)
+// SearchPhrases searches for multiword entries containing the keyword.
 func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit int) ([]Word, error) {
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
@@ -737,113 +841,58 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 		limit = 20
 	}
 
-	// Use lowercase for case-insensitive matching, but PRESERVE spaces
-	// NOTE: We cannot use headword_normalized here because ToNormalized() removes spaces,
-	// which would break phrase matching (e.g., "go after" becomes "goafter")
 	lowerKeyword := strings.ToLower(strings.TrimSpace(keyword))
 	escaped := escapeLikePattern(lowerKeyword)
-
-	// Check if keyword contains spaces (indicates multi-word input for prefix matching)
+	normalizedFuzzy := "%" + escapeLikePattern(norm.NormalizeHeadword(keyword)) + "%"
 	hasSpace := strings.Contains(lowerKeyword, " ")
 
-	// Query for phrases (headwords containing spaces) where the keyword appears as a complete word
-	// We search in LOWER(headword) for case-insensitive matching while preserving spaces
-	// Pattern: keyword at start, middle, or end of phrase
-	// - Start: "go %" matches "go after", "go Dutch"
-	// - Middle: "% go %" matches "let go of"
-	// - End: "% go" matches "let go"
-	//
-	// For incomplete input like "how a", we support prefix matching on the last word:
-	// - "how a%" matches "how about", "how are you"
-	//
-	// IMPORTANT: For single-word searches (no spaces), we use word-boundary matching only.
-	// This prevents "star" from matching "start in" or "start up".
-
-	// Prepare LIKE patterns
 	patternStart := escaped + " %"
 	patternMiddle := "% " + escaped + " %"
 	patternEnd := "% " + escaped
-	// Add prefix pattern for autocomplete-style search (e.g., "how a" -> "how a%")
-	// Only use unbounded prefix for multi-word queries; single words must have word boundaries
 	var patternPrefix string
 	if hasSpace {
-		// Multi-word input: allow prefix matching on the last word
-		// e.g., "how a" matches "how about", "how are you"
 		patternPrefix = escaped + "%"
 	} else {
-		// Single-word input: require space boundary to avoid "star" matching "start"
-		// This makes patternPrefix the same as patternStart, which is intentional
 		patternPrefix = escaped + " %"
 	}
 
-	// Build CTE with UNION ALL so each branch can leverage trigram indexes individually
-	// Priority:
-	//  1. Keyword at start of main headword (exact + prefix)
-	//  2. Keyword at start of variant (exact + prefix)
-	//  3. Keyword in middle of main headword
-	//  4. Keyword in middle of variant
-	//  5. Keyword at end of main headword
-	//  6. Keyword at end of variant
-	//  7/8. Fallback tiers (should rarely trigger, kept for deterministic ordering)
 	unionSQL := `
-	WITH combined AS (
+	WITH ranked AS (
 		SELECT
-			w.id,
-			w.id AS id_ord,
+			t.entry_id AS id,
+			t.entry_id AS id_ord,
 			CASE
-				WHEN LOWER(w.headword) LIKE ? THEN 1
-				WHEN LOWER(w.headword) LIKE ? THEN 1
-				WHEN LOWER(w.headword) LIKE ? THEN 3
-				WHEN LOWER(w.headword) LIKE ? THEN 5
-				ELSE 7
+				WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank
+				WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank
+				WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank + 2
+				WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank + 4
+				ELSE t.term_rank + 6
 			END AS priority,
-			CASE WHEN w.frequency_rank = 0 THEN 999999 ELSE w.frequency_rank END AS freq_rank,
-			w.headword
-		FROM words w
-		WHERE w.headword LIKE '% %'
-			AND (
-				LOWER(w.headword) LIKE ?
-				OR LOWER(w.headword) LIKE ?
-				OR LOWER(w.headword) LIKE ?
-				OR LOWER(w.headword) LIKE ?
-			)
-
-		UNION ALL
-
-		SELECT
-			v.word_id AS id,
-			w.id AS id_ord,
-			CASE
-				WHEN LOWER(v.variant_text) LIKE ? THEN 2
-				WHEN LOWER(v.variant_text) LIKE ? THEN 2
-				WHEN LOWER(v.variant_text) LIKE ? THEN 4
-				WHEN LOWER(v.variant_text) LIKE ? THEN 6
-				ELSE 8
-			END AS priority,
-			CASE WHEN w.frequency_rank = 0 THEN 999999 ELSE w.frequency_rank END AS freq_rank,
-			w.headword
-		FROM word_variants v
-		JOIN words w ON w.id = v.word_id
-		WHERE w.headword LIKE '% %'
-			AND v.variant_text LIKE '% %'
-			AND (
-				LOWER(v.variant_text) LIKE ?
-				OR LOWER(v.variant_text) LIKE ?
-				OR LOWER(v.variant_text) LIKE ?
-				OR LOWER(v.variant_text) LIKE ?
-			)
-	), ranked AS (
-		SELECT
-			id,
-			priority,
-			freq_rank,
-			id_ord,
-			headword,
+			CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS freq_rank,
+			t.headword,
 			ROW_NUMBER() OVER (
-				PARTITION BY id
-				ORDER BY freq_rank, priority, id_ord, headword
+				PARTITION BY t.entry_id
+				ORDER BY
+					CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END,
+					CASE
+						WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank
+						WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank
+						WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank + 2
+						WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank + 4
+						ELSE t.term_rank + 6
+					END,
+					t.entry_id,
+					t.headword
 			) AS rn
-		FROM combined
+		FROM entry_search_terms t
+		WHERE t.is_multiword = true
+			AND t.normalized_term LIKE ?
+			AND (
+				LOWER(t.term_text) LIKE ?
+				OR LOWER(t.term_text) LIKE ?
+				OR LOWER(t.term_text) LIKE ?
+				OR LOWER(t.term_text) LIKE ?
+			)
 	)
 	SELECT id, priority, freq_rank, id_ord, headword
 	FROM ranked
@@ -855,16 +904,16 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 	args := []interface{}{
 		patternStart, patternPrefix, patternMiddle, patternEnd,
 		patternStart, patternPrefix, patternMiddle, patternEnd,
-		patternStart, patternPrefix, patternMiddle, patternEnd,
+		normalizedFuzzy,
 		patternStart, patternPrefix, patternMiddle, patternEnd,
 		limit,
 	}
 
 	type phraseRow struct {
-		ID       uint
+		ID       int64
 		Priority int
 		FreqRank int
-		IDOrd    uint
+		IDOrd    int64
 		Headword string
 	}
 
@@ -872,107 +921,78 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 	if err := db.Raw(unionSQL, args...).Scan(&rankedRows).Error; err != nil {
 		return nil, err
 	}
-
 	if len(rankedRows) == 0 {
 		return []Word{}, nil
 	}
 
-	wordIDs := make([]uint, 0, len(rankedRows))
+	wordIDs := make([]int64, 0, len(rankedRows))
 	for _, row := range rankedRows {
 		wordIDs = append(wordIDs, row.ID)
 	}
-	if len(wordIDs) == 0 {
-		return []Word{}, nil
-	}
 
-	// Fetch full word objects with POS info
-	var words []Word
-	if err := db.Where("id IN ?", wordIDs).
-		Find(&words).Error; err != nil {
-		return nil, err
-	}
-
-	// Load distinct POS values for each word
-	type posRow struct {
-		WordID uint
-		POS    int
-	}
-
-	var posRows []posRow
-	if err := db.Table("senses").
-		Select("word_id, pos").
-		Where("word_id IN ?", wordIDs).
-		Group("word_id, pos").
-		Find(&posRows).Error; err != nil {
-		return nil, err
-	}
-
-	posMap := make(map[uint][]Sense, len(wordIDs))
-	for _, row := range posRows {
-		posMap[row.WordID] = append(posMap[row.WordID], Sense{POS: row.POS})
-	}
-
-	for i := range words {
-		if senses, ok := posMap[words[i].ID]; ok {
-			words[i].Senses = senses
-		} else {
-			words[i].Senses = []Sense{}
-		}
-	}
-
-	wordByID := make(map[uint]*Word, len(words))
-	for i := range words {
-		wordByID[words[i].ID] = &words[i]
-	}
-
-	ordered := make([]Word, 0, len(wordIDs))
-	for _, id := range wordIDs {
-		if w, ok := wordByID[id]; ok {
-			ordered = append(ordered, *w)
-		}
-	}
-
-	return ordered, nil
+	return r.loadWordsByIDs(db, wordIDs, false, false, false)
 }
 
-// GetPronunciationsByWordID retrieves pronunciations for a word
-func (r *Repository) GetPronunciationsByWordID(ctx context.Context, wordID uint, accent *int) ([]Pronunciation, error) {
+// GetPronunciationsByWordID retrieves pronunciations for an entry.
+func (r *Repository) GetPronunciationsByWordID(ctx context.Context, wordID int64, accent *string) ([]Pronunciation, error) {
 	var pronunciations []Pronunciation
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	query := db.Where("word_id = ?", wordID)
-
+	query := db.Where("entry_id = ?", wordID)
 	if accent != nil {
-		query = query.Where("accent = ?", *accent)
+		query = query.Where("accent_code = ?", *accent)
 	}
-
-	if err := query.Find(&pronunciations).Error; err != nil {
+	if err := query.Order("accent_code ASC, is_primary DESC, display_order ASC, id ASC").Find(&pronunciations).Error; err != nil {
 		return nil, err
 	}
 
 	return pronunciations, nil
 }
 
-// GetSensesByWordID retrieves senses for a word
-func (r *Repository) GetSensesByWordID(ctx context.Context, wordID uint, pos *int) ([]Sense, error) {
-	var senses []Sense
+// GetSensesByWordID retrieves senses for an entry.
+func (r *Repository) GetSensesByWordID(ctx context.Context, wordID int64, pos *string) ([]Sense, error) {
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	query := db.Where("word_id = ?", wordID)
 
-	if pos != nil {
-		query = query.Where("pos = ?", *pos)
-	}
-
-	if err := query.Preload("Examples", func(db *gorm.DB) *gorm.DB {
-		return db.Order("example_order ASC")
-	}).Order("sense_order ASC").Find(&senses).Error; err != nil {
+	var entry Word
+	if err := db.Select("id", "pos").First(&entry, "id = ?", wordID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []Sense{}, nil
+		}
 		return nil, err
 	}
+	if pos != nil && entry.Pos != *pos {
+		return []Sense{}, nil
+	}
 
+	var senses []Sense
+	if err := db.Where("entry_id = ?", wordID).
+		Preload("LearningSignal").
+		Preload("CEFRSourceSignals", func(db *gorm.DB) *gorm.DB {
+			return db.Order("cefr_source ASC")
+		}).
+		Preload("GlossesEN", func(db *gorm.DB) *gorm.DB {
+			return db.Order("gloss_order ASC, id ASC")
+		}).
+		Preload("GlossesZH", func(db *gorm.DB) *gorm.DB {
+			return db.Order("is_primary DESC, gloss_order ASC, source ASC, id ASC")
+		}).
+		Preload("Labels", func(db *gorm.DB) *gorm.DB {
+			return db.Order("label_order ASC, label_type ASC, label_code ASC, id ASC")
+		}).
+		Preload("Examples", func(db *gorm.DB) *gorm.DB {
+			return db.Order("example_order ASC, id ASC")
+		}).
+		Preload("LexicalRelations", func(db *gorm.DB) *gorm.DB {
+			return db.Order("relation_type ASC, display_order ASC, target_text ASC, id ASC")
+		}).
+		Order("sense_order ASC, id ASC").
+		Find(&senses).Error; err != nil {
+		return nil, err
+	}
 	return senses, nil
 }

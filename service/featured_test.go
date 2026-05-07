@@ -6,13 +6,12 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/simp-lee/isdict-commons/model"
 	"github.com/simp-lee/isdict-data/repository"
 )
 
 func TestRandomFeaturedWords_UsesSharedContractAndMinimalBatchHydration(t *testing.T) {
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			return []string{"learn", "look after", "example", "turn on"}, nil
 		},
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
@@ -23,8 +22,8 @@ func TestRandomFeaturedWords_UsesSharedContractAndMinimalBatchHydration(t *testi
 				t.Fatalf("expected minimal hydration flags, got variants=%v pronunciations=%v senses=%v", includeVariants, includePronunciations, includeSenses)
 			}
 			return []repository.Word{
-				{Headword: "learn", TranslationZH: "学习"},
-				{Headword: "example", TranslationZH: "例子"},
+				wordWithSummary("learn", "学习"),
+				wordWithSummary("example", "例子"),
 			}, nil
 		},
 	}, createTestConfig())
@@ -35,9 +34,9 @@ func TestRandomFeaturedWords_UsesSharedContractAndMinimalBatchHydration(t *testi
 		t.Fatalf("RandomFeaturedWords() error = %v", err)
 	}
 
-	want := []model.SuggestResponse{
-		{Headword: "learn", WordAnnotations: model.WordAnnotations{TranslationZH: "学习"}},
-		{Headword: "example", WordAnnotations: model.WordAnnotations{TranslationZH: "例子"}},
+	want := []SuggestResponse{
+		{Headword: "learn", WordAnnotations: WordAnnotations{TranslationZH: "学习"}},
+		{Headword: "example", WordAnnotations: WordAnnotations{TranslationZH: "例子"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("RandomFeaturedWords() = %#v; want %#v", got, want)
@@ -55,7 +54,7 @@ func TestRandomFeaturedPhrases_RejectsInvalidLimit(t *testing.T) {
 
 func TestRandomFeaturedWords_RejectsLimitAboveBatchMax(t *testing.T) {
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			t.Fatal("expected limit validation before loading candidates")
 			return nil, nil
 		},
@@ -76,7 +75,7 @@ func TestRandomFeaturedWords_RejectsLimitAboveBatchMax(t *testing.T) {
 
 func TestRandomFeaturedPhrases_ReturnsTypedErrorWhenPoolIsTooSmall(t *testing.T) {
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			return []string{"learn", "look after", "example"}, nil
 		},
 	}, createTestConfig())
@@ -89,11 +88,11 @@ func TestRandomFeaturedPhrases_ReturnsTypedErrorWhenPoolIsTooSmall(t *testing.T)
 
 func TestRandomFeaturedWords_ReturnsTypedErrorWhenBatchIsIncomplete(t *testing.T) {
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			return []string{"learn", "example"}, nil
 		},
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
-			return []repository.Word{{Headword: "learn", TranslationZH: "学习"}}, nil
+			return []repository.Word{wordWithSummary("learn", "学习")}, nil
 		},
 	}, createTestConfig())
 	service.shuffle = func([]string) {}
@@ -107,14 +106,14 @@ func TestRandomFeaturedWords_ReturnsTypedErrorWhenBatchIsIncomplete(t *testing.T
 func TestRandomFeaturedWords_CachesFeaturedCandidatePool(t *testing.T) {
 	listCalls := 0
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			listCalls++
 			return []string{"learn", "look after", "example", "turn on"}, nil
 		},
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 			words := make([]repository.Word, 0, len(headwords))
 			for _, headword := range headwords {
-				words = append(words, repository.Word{Headword: headword, TranslationZH: headword})
+				words = append(words, wordWithSummary(headword, headword))
 			}
 			return words, nil
 		},
@@ -128,23 +127,23 @@ func TestRandomFeaturedWords_CachesFeaturedCandidatePool(t *testing.T) {
 		t.Fatalf("RandomFeaturedPhrases() error = %v", err)
 	}
 	if listCalls != 1 {
-		t.Fatalf("ListSlugBootstrapHeadwords() call count = %d; want 1", listCalls)
+		t.Fatalf("ListFeaturedCandidateHeadwords() call count = %d; want 1", listCalls)
 	}
 }
 
 func TestRandomFeaturedWords_RejectsHydrationHeadwordMismatches(t *testing.T) {
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			return []string{"learn", "example"}, nil
 		},
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {
 			return []repository.Word{
-				{Headword: "learnt", TranslationZH: "学习"},
-				{Headword: "example", TranslationZH: "例子"},
+				wordWithSummary("learnt", "学习"),
+				wordWithSummary("example", "例子"),
 			}, nil
 		},
 		getWordsByVariantsFunc: func(context.Context, []string, bool, bool, bool) ([]repository.BatchVariantMatch, error) {
-			t.Fatal("expected featured hydration to avoid variant fallback")
+			t.Fatal("expected featured hydration to avoid entry_forms lookup")
 			return nil, nil
 		},
 	}, createTestConfig())
@@ -159,7 +158,7 @@ func TestRandomFeaturedWords_RejectsHydrationHeadwordMismatches(t *testing.T) {
 func TestRandomFeaturedWords_WrapsListFailureAndPreservesCause(t *testing.T) {
 	rootErr := errors.New("bootstrap query failed")
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			return nil, rootErr
 		},
 	}, createTestConfig())
@@ -176,7 +175,7 @@ func TestRandomFeaturedWords_WrapsListFailureAndPreservesCause(t *testing.T) {
 func TestRandomFeaturedWords_WrapsBatchFailureAndPreservesCause(t *testing.T) {
 	rootErr := errors.New("batch hydration failed")
 	service := NewWordService(&mockRepository{
-		listSlugBootstrapHeadwordsFunc: func(context.Context) ([]string, error) {
+		listFeaturedCandidateHeadwordsFunc: func(context.Context) ([]string, error) {
 			return []string{"learn", "example"}, nil
 		},
 		getWordsByHeadwordsFunc: func(_ context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error) {

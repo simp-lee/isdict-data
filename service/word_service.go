@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/simp-lee/isdict-commons/model"
-	"github.com/simp-lee/isdict-commons/textutil"
+	"github.com/simp-lee/isdict-commons/norm"
 	"github.com/simp-lee/isdict-data/queryvalidation"
 	"github.com/simp-lee/isdict-data/repository"
 )
 
-// WordService handles business logic for word operations
+// WordService handles business logic for word operations.
 type WordService struct {
 	repo    repository.WordRepository
 	config  ServiceConfig
@@ -23,7 +24,6 @@ type WordService struct {
 	featuredCandidates   featuredCandidateCache
 }
 
-// Domain-level errors produced by the service layer
 var (
 	ErrBatchLimitExceeded = errors.New("batch limit exceeded")
 	ErrWordNotFound       = repository.ErrWordNotFound
@@ -37,8 +37,8 @@ const (
 )
 
 type batchCandidate struct {
-	word    *model.Word
-	variant *model.WordVariant
+	word    *repository.Word
+	variant *repository.WordVariant
 }
 
 type batchCandidateIndex map[string][]batchCandidate
@@ -49,17 +49,14 @@ type batchIncludeOptions struct {
 	senses         bool
 }
 
-// NewWordService creates a new word service instance
 func NewWordService(repo repository.WordRepository, cfg ServiceConfig) *WordService {
 	return &WordService{
-		repo:    repo,
-		config:  normalizeServiceConfig(cfg),
-		shuffle: defaultFeaturedShuffle,
+		repo:   repo,
+		config: normalizeServiceConfig(cfg),
 	}
 }
 
-// GetWordByHeadword retrieves a word by headword
-func (s *WordService) GetWordByHeadword(ctx context.Context, headword string, accentCode *int, includeVariants, includePronunciations, includeSenses bool) (*model.WordResponse, error) {
+func (s *WordService) GetWordByHeadword(ctx context.Context, headword string, accentCode *string, includeVariants, includePronunciations, includeSenses bool) (*WordResponse, error) {
 	word, variant, err := s.repo.GetWordByHeadword(ctx, headword, includeVariants, includePronunciations, includeSenses)
 	if err != nil {
 		return nil, err
@@ -68,17 +65,15 @@ func (s *WordService) GetWordByHeadword(ctx context.Context, headword string, ac
 	return s.convertToWordResponse(word, variant, accentCode, includeVariants, includePronunciations, includeSenses), nil
 }
 
-// GetWordsByVariant finds words by variant text
-func (s *WordService) GetWordsByVariant(ctx context.Context, variant string, kindStr *string, includePronunciations, includeSenses bool) ([]model.VariantReverseResponse, error) {
-	var kind *int
+func (s *WordService) GetWordsByVariant(ctx context.Context, variant string, kindStr *string, includePronunciations, includeSenses bool) ([]VariantReverseResponse, error) {
+	var kind *string
 	if kindStr != nil {
-		// kindStr is already lowercase and validated by the handler layer
 		switch *kindStr {
-		case "form":
-			k := int(model.VariantForm)
+		case model.RelationKindForm:
+			k := model.RelationKindForm
 			kind = &k
-		case "alias":
-			k := int(model.VariantAlias)
+		case model.RelationKindAlias:
+			k := model.RelationKindAlias
 			kind = &k
 		}
 	}
@@ -88,42 +83,34 @@ func (s *WordService) GetWordsByVariant(ctx context.Context, variant string, kin
 		return nil, err
 	}
 
-	// Create a map for quick variant lookup - support multiple variants per word
-	variantMap := make(map[uint][]model.WordVariant)
+	variantMap := make(map[int64][]repository.WordVariant)
 	for i := range variants {
 		wordID := variants[i].WordID
 		variantMap[wordID] = append(variantMap[wordID], variants[i])
 	}
 
-	results := make([]model.VariantReverseResponse, 0, len(words))
+	results := make([]VariantReverseResponse, 0, len(words))
 	for _, word := range words {
-		resp := model.VariantReverseResponse{
-			ID:       word.ID,
-			Headword: word.Headword,
-			WordAnnotations: model.WordAnnotations{
-				CEFRLevel:      model.GetCEFRLevelName(word.CEFRLevel),
-				CEFRSource:     word.CEFRSource,
-				CETLevel:       cetDisplayLevel(word.CETLevel),
-				OxfordLevel:    word.OxfordLevel,
-				SchoolLevel:    word.SchoolLevel,
-				FrequencyRank:  word.FrequencyRank,
-				FrequencyCount: word.FrequencyCount,
-				CollinsStars:   word.CollinsStars,
-				TranslationZH:  word.TranslationZH,
-			},
+		resp := VariantReverseResponse{
+			ID:                word.ID,
+			Headword:          word.Headword,
+			SourceRunID:       word.SourceRunID,
+			SourceRun:         importRunResponse(word.SourceRun),
+			WordAnnotations:   wordAnnotations(word),
+			CEFRSourceSignals: entryCEFRSourceSignalResponses(word.CEFRSourceSignals),
+			Etymology:         etymologyResponse(word.Etymology),
+			LexicalRelations:  lexicalRelationResponses(word.LexicalRelations),
 		}
 
 		if includePronunciations {
 			resp.Pronunciations = s.convertPronunciations(word.Pronunciations, nil)
+			resp.PronunciationAudios = s.convertPronunciationAudios(word.PronunciationAudios, nil)
 		}
-
 		if includeSenses {
-			resp.Senses = s.convertSenses(word.Senses, langBoth)
+			resp.Senses = s.convertSenses(word.Senses, langBoth, word.Pos)
 		}
-
-		// Add all matched variant info for this word
 		if variants, ok := variantMap[word.ID]; ok {
-			resp.VariantInfo = make([]model.VariantResponse, 0, len(variants))
+			resp.VariantInfo = make([]VariantResponse, 0, len(variants))
 			for _, v := range variants {
 				resp.VariantInfo = append(resp.VariantInfo, *s.convertVariant(v))
 			}
@@ -135,14 +122,13 @@ func (s *WordService) GetWordsByVariant(ctx context.Context, variant string, kin
 	return results, nil
 }
 
-// GetWordsBatch retrieves multiple words with automatic fallback to variants
-func (s *WordService) GetWordsBatch(ctx context.Context, req *model.BatchRequest) ([]model.WordResponse, *model.MetaInfo, error) {
+func (s *WordService) GetWordsBatch(ctx context.Context, req *BatchRequest) ([]WordResponse, *MetaInfo, error) {
 	includeOptions, err := s.prepareBatchRequest(req)
 	if err != nil {
 		return nil, nil, err
 	}
 	if req == nil || len(req.Words) == 0 {
-		return []model.WordResponse{}, nil, nil
+		return []WordResponse{}, nil, nil
 	}
 
 	words, err := s.repo.GetWordsByHeadwords(ctx, req.Words, includeOptions.variants, includeOptions.pronunciations, includeOptions.senses)
@@ -150,7 +136,7 @@ func (s *WordService) GetWordsBatch(ctx context.Context, req *model.BatchRequest
 		return nil, nil, err
 	}
 	index := buildBatchCandidateIndex(words)
-	if err := s.fillBatchVariantFallback(ctx, req.Words, index, includeOptions); err != nil {
+	if err := s.resolveBatchEntryForms(ctx, req.Words, index, includeOptions); err != nil {
 		return nil, nil, err
 	}
 
@@ -158,7 +144,7 @@ func (s *WordService) GetWordsBatch(ctx context.Context, req *model.BatchRequest
 	requested := len(req.Words)
 	found := len(responses)
 
-	meta := &model.MetaInfo{
+	meta := &MetaInfo{
 		Requested: &requested,
 		Found:     &found,
 		NotFound:  notFound,
@@ -167,7 +153,7 @@ func (s *WordService) GetWordsBatch(ctx context.Context, req *model.BatchRequest
 	return responses, meta, nil
 }
 
-func (s *WordService) prepareBatchRequest(req *model.BatchRequest) (batchIncludeOptions, error) {
+func (s *WordService) prepareBatchRequest(req *BatchRequest) (batchIncludeOptions, error) {
 	includeOptions := resolveBatchIncludeOptions(req)
 	if req == nil {
 		return includeOptions, nil
@@ -191,7 +177,7 @@ func (s *WordService) prepareBatchRequest(req *model.BatchRequest) (batchInclude
 	return includeOptions, nil
 }
 
-func resolveBatchIncludeOptions(req *model.BatchRequest) batchIncludeOptions {
+func resolveBatchIncludeOptions(req *BatchRequest) batchIncludeOptions {
 	options := batchIncludeOptions{
 		variants:       true,
 		pronunciations: true,
@@ -220,7 +206,7 @@ func buildBatchCandidateIndex(words []repository.Word) batchCandidateIndex {
 	return index
 }
 
-func (index batchCandidateIndex) addCandidate(word *model.Word, variant *model.WordVariant, alias string) {
+func (index batchCandidateIndex) addCandidate(word *repository.Word, variant *repository.WordVariant, alias string) {
 	if word == nil {
 		return
 	}
@@ -232,10 +218,10 @@ func (index batchCandidateIndex) addCandidate(word *model.Word, variant *model.W
 	}
 }
 
-func batchCandidateKeys(word *model.Word, alias string) []string {
-	keys := []string{textutil.ToNormalized(word.Headword)}
+func batchCandidateKeys(word *repository.Word, alias string) []string {
+	keys := []string{norm.NormalizeHeadword(word.Headword)}
 	if trimmed := strings.TrimSpace(alias); trimmed != "" {
-		aliasKey := textutil.ToNormalized(trimmed)
+		aliasKey := norm.NormalizeHeadword(trimmed)
 		if aliasKey != "" && aliasKey != keys[0] {
 			keys = append(keys, aliasKey)
 		}
@@ -243,7 +229,7 @@ func batchCandidateKeys(word *model.Word, alias string) []string {
 	return keys
 }
 
-func (index batchCandidateIndex) hasCandidate(key string, word *model.Word, variant *model.WordVariant) bool {
+func (index batchCandidateIndex) hasCandidate(key string, word *repository.Word, variant *repository.WordVariant) bool {
 	for _, existing := range index[key] {
 		if sameBatchCandidate(existing, batchCandidate{word: word, variant: variant}) {
 			return true
@@ -259,11 +245,11 @@ func sameBatchCandidate(left, right batchCandidate) bool {
 	if left.variant == nil || right.variant == nil {
 		return left.variant == nil && right.variant == nil
 	}
-	return left.variant.VariantText == right.variant.VariantText
+	return left.variant.FormText == right.variant.FormText
 }
 
 func (index batchCandidateIndex) selectCandidate(input string) (batchCandidate, bool) {
-	key := textutil.ToNormalized(input)
+	key := norm.NormalizeHeadword(input)
 	candidates := index[key]
 	if len(candidates) == 0 {
 		return batchCandidate{}, false
@@ -278,7 +264,7 @@ func preferredBatchCandidate(candidates []batchCandidate, input string) batchCan
 		}
 	}
 	for _, candidate := range candidates {
-		if candidate.variant != nil && candidate.variant.VariantText == input {
+		if candidate.variant != nil && candidate.variant.FormText == input {
 			return candidate
 		}
 	}
@@ -300,7 +286,7 @@ func unresolvedBatchWords(words []string, index batchCandidateIndex) []string {
 	return missing
 }
 
-func (s *WordService) fillBatchVariantFallback(ctx context.Context, inputs []string, index batchCandidateIndex, options batchIncludeOptions) error {
+func (s *WordService) resolveBatchEntryForms(ctx context.Context, inputs []string, index batchCandidateIndex, options batchIncludeOptions) error {
 	missing := unresolvedBatchWords(inputs, index)
 	if len(missing) == 0 {
 		return nil
@@ -311,13 +297,13 @@ func (s *WordService) fillBatchVariantFallback(ctx context.Context, inputs []str
 		return err
 	}
 	for i := range matches {
-		index.addCandidate(&matches[i].Word, &matches[i].Variant, matches[i].Variant.VariantText)
+		index.addCandidate(&matches[i].Word, &matches[i].Variant, matches[i].Variant.FormText)
 	}
 	return nil
 }
 
-func (s *WordService) buildBatchResponses(inputs []string, index batchCandidateIndex, options batchIncludeOptions) ([]model.WordResponse, []string) {
-	responses := make([]model.WordResponse, 0, len(inputs))
+func (s *WordService) buildBatchResponses(inputs []string, index batchCandidateIndex, options batchIncludeOptions) ([]WordResponse, []string) {
+	responses := make([]WordResponse, 0, len(inputs))
 	notFound := make([]string, 0)
 	for _, input := range inputs {
 		candidate, ok := index.selectCandidate(input)
@@ -330,9 +316,7 @@ func (s *WordService) buildBatchResponses(inputs []string, index batchCandidateI
 	return responses, notFound
 }
 
-// SearchWords performs fuzzy search
-func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *int, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]model.SearchResultResponse, *model.MetaInfo, error) {
-	// Validate keyword length
+func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]SearchResultResponse, *MetaInfo, error) {
 	keywordLength := queryvalidation.NormalizedRuneCount(keyword)
 	if keywordLength < queryvalidation.MinQueryLength {
 		return nil, nil, fmt.Errorf("keyword must be at least %d characters", queryvalidation.MinQueryLength)
@@ -341,7 +325,6 @@ func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *
 		return nil, nil, errors.New("keyword must not exceed 100 characters")
 	}
 
-	// Validate and set defaults
 	if limit <= 0 {
 		limit = 20
 	}
@@ -357,38 +340,17 @@ func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *
 		return nil, nil, err
 	}
 
-	results := make([]model.SearchResultResponse, 0, len(words))
+	results := make([]SearchResultResponse, 0, len(words))
 	for _, word := range words {
-		// Get distinct POS values
-		posNames := make([]string, 0, len(word.Senses))
-		posSet := make(map[string]bool)
-		for _, sense := range word.Senses {
-			posName := model.GetPOSName(sense.POS)
-			if !posSet[posName] {
-				posSet[posName] = true
-				posNames = append(posNames, posName)
-			}
-		}
-
-		results = append(results, model.SearchResultResponse{
-			ID:       word.ID,
-			Headword: word.Headword,
-			POS:      posNames,
-			WordAnnotations: model.WordAnnotations{
-				CEFRLevel:      model.GetCEFRLevelName(word.CEFRLevel),
-				CEFRSource:     word.CEFRSource,
-				CETLevel:       cetDisplayLevel(word.CETLevel),
-				OxfordLevel:    word.OxfordLevel,
-				SchoolLevel:    word.SchoolLevel,
-				FrequencyRank:  word.FrequencyRank,
-				FrequencyCount: word.FrequencyCount,
-				CollinsStars:   word.CollinsStars,
-				TranslationZH:  word.TranslationZH,
-			},
+		results = append(results, SearchResultResponse{
+			ID:              word.ID,
+			Headword:        word.Headword,
+			POS:             []string{posDisplayName(word.Pos)},
+			WordAnnotations: wordAnnotations(word),
 		})
 	}
 
-	meta := &model.MetaInfo{
+	meta := &MetaInfo{
 		Total:  &total,
 		Limit:  &limit,
 		Offset: &offset,
@@ -397,9 +359,7 @@ func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *
 	return results, meta, nil
 }
 
-// SuggestWords provides autocomplete suggestions
-func (s *WordService) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]model.SuggestResponse, error) {
-	// Validate prefix length
+func (s *WordService) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]SuggestResponse, error) {
 	prefixLength := queryvalidation.NormalizedRuneCount(prefix)
 	if prefixLength < queryvalidation.MinQueryLength {
 		return nil, fmt.Errorf("prefix must be at least %d characters", queryvalidation.MinQueryLength)
@@ -420,30 +380,18 @@ func (s *WordService) SuggestWords(ctx context.Context, prefix string, cefrLevel
 		return nil, err
 	}
 
-	results := make([]model.SuggestResponse, 0, len(words))
+	results := make([]SuggestResponse, 0, len(words))
 	for _, word := range words {
-		results = append(results, model.SuggestResponse{
-			Headword: word.Headword,
-			WordAnnotations: model.WordAnnotations{
-				CEFRLevel:      model.GetCEFRLevelName(word.CEFRLevel),
-				CEFRSource:     word.CEFRSource,
-				CETLevel:       cetDisplayLevel(word.CETLevel),
-				OxfordLevel:    word.OxfordLevel,
-				SchoolLevel:    word.SchoolLevel,
-				FrequencyRank:  word.FrequencyRank,
-				FrequencyCount: word.FrequencyCount,
-				CollinsStars:   word.CollinsStars,
-				TranslationZH:  word.TranslationZH,
-			},
+		results = append(results, SuggestResponse{
+			Headword:        word.Headword,
+			WordAnnotations: wordAnnotations(word),
 		})
 	}
 
 	return results, nil
 }
 
-// SearchPhrases searches for phrases containing the keyword
-func (s *WordService) SearchPhrases(ctx context.Context, keyword string, limit int) ([]model.SuggestResponse, error) {
-	// Validate keyword
+func (s *WordService) SearchPhrases(ctx context.Context, keyword string, limit int) ([]SuggestResponse, error) {
 	keywordRunes := []rune(strings.TrimSpace(keyword))
 	if len(keywordRunes) < 1 {
 		return nil, errors.New("keyword must be at least 1 character")
@@ -464,29 +412,18 @@ func (s *WordService) SearchPhrases(ctx context.Context, keyword string, limit i
 		return nil, err
 	}
 
-	results := make([]model.SuggestResponse, 0, len(words))
+	results := make([]SuggestResponse, 0, len(words))
 	for _, word := range words {
-		results = append(results, model.SuggestResponse{
-			Headword: word.Headword,
-			WordAnnotations: model.WordAnnotations{
-				CEFRLevel:      model.GetCEFRLevelName(word.CEFRLevel),
-				CEFRSource:     word.CEFRSource,
-				CETLevel:       cetDisplayLevel(word.CETLevel),
-				OxfordLevel:    word.OxfordLevel,
-				SchoolLevel:    word.SchoolLevel,
-				FrequencyRank:  word.FrequencyRank,
-				FrequencyCount: word.FrequencyCount,
-				CollinsStars:   word.CollinsStars,
-				TranslationZH:  word.TranslationZH,
-			},
+		results = append(results, SuggestResponse{
+			Headword:        word.Headword,
+			WordAnnotations: wordAnnotations(word),
 		})
 	}
 
 	return results, nil
 }
 
-// GetPronunciations retrieves pronunciations for a word
-func (s *WordService) GetPronunciations(ctx context.Context, headword string, accentCode *int) ([]model.PronunciationResponse, error) {
+func (s *WordService) GetPronunciations(ctx context.Context, headword string, accentCode *string) ([]PronunciationResponse, error) {
 	word, _, err := s.repo.GetWordByHeadword(ctx, headword, false, false, false)
 	if err != nil {
 		return nil, err
@@ -500,8 +437,7 @@ func (s *WordService) GetPronunciations(ctx context.Context, headword string, ac
 	return s.convertPronunciations(pronunciations, accentCode), nil
 }
 
-// GetSenses retrieves senses for a word
-func (s *WordService) GetSenses(ctx context.Context, headword string, posCode *int, lang string) ([]model.SenseResponse, error) {
+func (s *WordService) GetSenses(ctx context.Context, headword string, posCode *string, lang string) ([]SenseResponse, error) {
 	word, _, err := s.repo.GetWordByHeadword(ctx, headword, false, false, false)
 	if err != nil {
 		return nil, err
@@ -512,50 +448,40 @@ func (s *WordService) GetSenses(ctx context.Context, headword string, posCode *i
 		return nil, err
 	}
 
-	return s.convertSenses(senses, lang), nil
+	return s.convertSenses(senses, lang, word.Pos), nil
 }
 
-// Helper methods for conversion
-
-func (s *WordService) convertToWordResponse(word *model.Word, variant *model.WordVariant, accentCode *int, includeVariants, includePronunciations, includeSenses bool) *model.WordResponse {
-	resp := &model.WordResponse{
-		ID:       word.ID,
-		Headword: word.Headword,
-		WordAnnotations: model.WordAnnotations{
-			CEFRLevel:      model.GetCEFRLevelName(word.CEFRLevel),
-			CEFRSource:     word.CEFRSource,
-			CETLevel:       cetDisplayLevel(word.CETLevel),
-			OxfordLevel:    word.OxfordLevel,
-			SchoolLevel:    word.SchoolLevel,
-			FrequencyRank:  word.FrequencyRank,
-			FrequencyCount: word.FrequencyCount,
-			CollinsStars:   word.CollinsStars,
-			TranslationZH:  word.TranslationZH,
-		},
+func (s *WordService) convertToWordResponse(word *repository.Word, variant *repository.WordVariant, accentCode *string, includeVariants, includePronunciations, includeSenses bool) *WordResponse {
+	resp := &WordResponse{
+		ID:                word.ID,
+		Headword:          word.Headword,
+		SourceRunID:       word.SourceRunID,
+		SourceRun:         importRunResponse(word.SourceRun),
+		WordAnnotations:   wordAnnotations(*word),
+		CEFRSourceSignals: entryCEFRSourceSignalResponses(word.CEFRSourceSignals),
+		Etymology:         etymologyResponse(word.Etymology),
+		LexicalRelations:  lexicalRelationResponses(word.LexicalRelations),
 	}
 
-	// If word was found via variant, add queried variant info
 	if variant != nil {
-		usageRatio := 0.0
-		if word.FrequencyCount > 0 {
-			usageRatio = float64(variant.FrequencyCount) / float64(word.FrequencyCount) * 100
+		resp.QueriedVariant = &QueriedVariantInfo{
+			FormText:        variant.FormText,
+			RelationKind:    variant.RelationKind,
+			SourceRelations: []string(variant.SourceRelations),
+			DisplayOrder:    variant.DisplayOrder,
 		}
-		resp.QueriedVariant = &model.QueriedVariantInfo{
-			Text:           variant.VariantText,
-			FrequencyRank:  variant.FrequencyRank,
-			FrequencyCount: variant.FrequencyCount,
-			UsageRatio:     usageRatio,
+		if variant.FormType != nil {
+			resp.QueriedVariant.FormType = *variant.FormType
 		}
 	}
 
 	if includePronunciations {
 		resp.Pronunciations = s.convertPronunciations(word.Pronunciations, accentCode)
+		resp.PronunciationAudios = s.convertPronunciationAudios(word.PronunciationAudios, accentCode)
 	}
-
 	if includeSenses {
-		resp.Senses = s.convertSenses(word.Senses, langBoth)
+		resp.Senses = s.convertSenses(word.Senses, langBoth, word.Pos)
 	}
-
 	if includeVariants {
 		resp.Variants = s.convertVariants(word.WordVariants)
 	}
@@ -563,35 +489,89 @@ func (s *WordService) convertToWordResponse(word *model.Word, variant *model.Wor
 	return resp
 }
 
-func (s *WordService) convertPronunciations(pronunciations []model.Pronunciation, accentCode *int) []model.PronunciationResponse {
-	results := make([]model.PronunciationResponse, 0, len(pronunciations))
+func wordAnnotations(word repository.Word) WordAnnotations {
+	annotations := WordAnnotations{TranslationZH: translationZH(word.SummariesZH)}
+	if signal := word.LearningSignal; signal != nil {
+		annotations.CEFRLevel = int(signal.CEFRLevel)
+		annotations.CEFRLevelName = cefrLevelName(int(signal.CEFRLevel))
+		annotations.CEFRSource = signal.CEFRSource
+		annotations.CETLevel = int(signal.CETLevel)
+		annotations.OxfordLevel = int(signal.OxfordLevel)
+		annotations.SchoolLevel = int(signal.SchoolLevel)
+		annotations.FrequencyRank = signal.FrequencyRank
+		annotations.FrequencyCount = signal.FrequencyCount
+		annotations.CollinsStars = int(signal.CollinsStars)
+		annotations.CEFRRunID = signal.CEFRRunID
+		annotations.CETRunID = signal.CETRunID
+		annotations.OxfordRunID = signal.OxfordRunID
+		annotations.FrequencyRunID = signal.FrequencyRunID
+		annotations.CollinsRunID = signal.CollinsRunID
+		annotations.LearningUpdatedAt = timePtr(signal.UpdatedAt)
+	}
+	return annotations
+}
+
+func translationZH(summaries []model.EntrySummaryZH) string {
+	if len(summaries) == 0 {
+		return ""
+	}
+	return summaries[0].SummaryText
+}
+
+func (s *WordService) convertPronunciations(pronunciations []repository.Pronunciation, accentCode *string) []PronunciationResponse {
+	results := make([]PronunciationResponse, 0, len(pronunciations))
 	for _, p := range pronunciations {
 		if accentCode != nil && p.Accent != *accentCode {
 			continue
 		}
-		accentName := model.GetAccentName(p.Accent)
-		results = append(results, model.PronunciationResponse{
-			Accent:    accentName,
-			IPA:       p.IPA,
-			IsPrimary: p.IsPrimary,
+		results = append(results, PronunciationResponse{
+			Accent:       accentDisplayName(p.Accent),
+			IPA:          p.IPA,
+			IsPrimary:    p.IsPrimary,
+			DisplayOrder: p.DisplayOrder,
 		})
 	}
 	return results
 }
 
-func (s *WordService) convertSenses(senses []model.Sense, lang string) []model.SenseResponse {
-	results := make([]model.SenseResponse, 0, len(senses))
+func (s *WordService) convertPronunciationAudios(audios []repository.PronunciationAudio, accentCode *string) []PronunciationAudioResponse {
+	results := make([]PronunciationAudioResponse, 0, len(audios))
+	for _, audio := range audios {
+		if accentCode != nil && audio.Accent != *accentCode {
+			continue
+		}
+		results = append(results, PronunciationAudioResponse{
+			Accent:        accentDisplayName(audio.Accent),
+			AudioFilename: audio.AudioFilename,
+			IsPrimary:     audio.IsPrimary,
+			DisplayOrder:  audio.DisplayOrder,
+		})
+	}
+	return results
+}
+
+func (s *WordService) convertSenses(senses []repository.Sense, lang string, pos string) []SenseResponse {
+	results := make([]SenseResponse, 0, len(senses))
 	for _, sense := range senses {
-		senseResp := model.SenseResponse{
-			SenseID:      sense.ID,
-			POS:          model.GetPOSName(sense.POS),
-			CEFRLevel:    model.GetCEFRLevelName(sense.CEFRLevel),
-			CEFRSource:   sense.CEFRSource,
-			OxfordLevel:  sense.OxfordLevel,
-			DefinitionEN: sense.DefinitionEN,
-			DefinitionZH: sense.DefinitionZH,
-			SenseOrder:   sense.SenseOrder,
-			Examples:     s.convertExamples(sense.Examples, lang),
+		senseResp := SenseResponse{
+			SenseID:           sense.ID,
+			POS:               posDisplayName(pos),
+			CEFRSourceSignals: senseCEFRSourceSignalResponses(sense.CEFRSourceSignals),
+			DefinitionsEN:     glossENResponses(sense.GlossesEN),
+			DefinitionsZH:     glossZHResponses(sense.GlossesZH),
+			Labels:            senseLabelResponses(sense.Labels),
+			LexicalRelations:  lexicalRelationResponses(sense.LexicalRelations),
+			SenseOrder:        sense.SenseOrder,
+			Examples:          s.convertExamples(sense.Examples, lang),
+		}
+		if signal := sense.LearningSignal; signal != nil {
+			senseResp.CEFRLevel = int(signal.CEFRLevel)
+			senseResp.CEFRLevelName = cefrLevelName(int(signal.CEFRLevel))
+			senseResp.CEFRSource = signal.CEFRSource
+			senseResp.OxfordLevel = int(signal.OxfordLevel)
+			senseResp.CEFRRunID = signal.CEFRRunID
+			senseResp.OxfordRunID = signal.OxfordRunID
+			senseResp.LearningUpdatedAt = timePtr(signal.UpdatedAt)
 		}
 
 		applyDefinitionLangFilter(&senseResp, lang)
@@ -600,13 +580,13 @@ func (s *WordService) convertSenses(senses []model.Sense, lang string) []model.S
 	return results
 }
 
-func (s *WordService) convertExamples(examples []model.Example, lang string) []model.ExampleResponse {
-	results := make([]model.ExampleResponse, 0, len(examples))
+func (s *WordService) convertExamples(examples []repository.Example, lang string) []ExampleResponse {
+	results := make([]ExampleResponse, 0, len(examples))
 	for _, ex := range examples {
-		exampleResp := model.ExampleResponse{
+		exampleResp := ExampleResponse{
 			ExampleID:    ex.ID,
+			Source:       ex.Source,
 			SentenceEN:   ex.SentenceEN,
-			SentenceZH:   ex.SentenceZH,
 			ExampleOrder: ex.ExampleOrder,
 		}
 
@@ -616,58 +596,219 @@ func (s *WordService) convertExamples(examples []model.Example, lang string) []m
 	return results
 }
 
-// applyDefinitionLangFilter removes unwanted language fields from sense definitions based on the lang parameter
-func applyDefinitionLangFilter(senseResp *model.SenseResponse, lang string) {
+func applyDefinitionLangFilter(senseResp *SenseResponse, lang string) {
 	switch lang {
 	case langEnglish:
-		senseResp.DefinitionZH = ""
+		senseResp.DefinitionsZH = nil
 	case langChinese:
-		senseResp.DefinitionEN = ""
+		senseResp.DefinitionsEN = nil
 	}
 }
 
-// applyExampleLangFilter removes unwanted language fields from examples based on the lang parameter
-func applyExampleLangFilter(exampleResp *model.ExampleResponse, lang string) {
+func applyExampleLangFilter(exampleResp *ExampleResponse, lang string) {
 	switch lang {
-	case langEnglish:
-		exampleResp.SentenceZH = ""
 	case langChinese:
 		exampleResp.SentenceEN = ""
 	}
 }
 
-func (s *WordService) convertVariants(variants []model.WordVariant) []model.VariantResponse {
-	results := make([]model.VariantResponse, 0, len(variants))
+func (s *WordService) convertVariants(variants []repository.WordVariant) []VariantResponse {
+	results := make([]VariantResponse, 0, len(variants))
 	for _, v := range variants {
 		results = append(results, *s.convertVariant(v))
 	}
 	return results
 }
 
-func (s *WordService) convertVariant(v model.WordVariant) *model.VariantResponse {
-	resp := &model.VariantResponse{
-		VariantText:    v.VariantText,
-		Kind:           model.GetVariantKindName(int(v.Kind)),
-		Tags:           v.Tags,
-		FrequencyRank:  v.FrequencyRank,
-		FrequencyCount: v.FrequencyCount,
+func (s *WordService) convertVariant(v repository.WordVariant) *VariantResponse {
+	resp := &VariantResponse{
+		FormText:        v.FormText,
+		RelationKind:    v.RelationKind,
+		SourceRelations: []string(v.SourceRelations),
+		DisplayOrder:    v.DisplayOrder,
 	}
 	if v.FormType != nil {
-		resp.FormType = model.GetFormTypeName(*v.FormType)
+		resp.FormType = *v.FormType
 	}
 	return resp
 }
 
-// cetDisplayLevel converts the database CET level encoding (0,1,2) to the
-// external API contract (0,4,6). The database keeps compact enum values to
-// simplify indexing, while API consumers expect the canonical CET identifiers.
-func cetDisplayLevel(dbLevel int) int {
-	switch dbLevel {
-	case 1:
-		return 4
-	case 2:
-		return 6
-	default:
-		return 0
+func importRunResponse(run *model.ImportRun) *ImportRunResponse {
+	if run == nil || (run.ID == 0 && strings.TrimSpace(run.SourceName) == "") {
+		return nil
 	}
+	return &ImportRunResponse{
+		ID:              run.ID,
+		SourceName:      run.SourceName,
+		SourcePath:      run.SourcePath,
+		SourceDumpID:    run.SourceDumpID,
+		SourceDumpDate:  run.SourceDumpDate,
+		RawFileSHA256:   run.RawFileSHA256,
+		ErrorCount:      run.ErrorCount,
+		PipelineVersion: run.PipelineVersion,
+		Status:          run.Status,
+		RowCount:        run.RowCount,
+		EntryCount:      run.EntryCount,
+		Note:            run.Note,
+		StartedAt:       timePtr(run.StartedAt),
+		FinishedAt:      run.FinishedAt,
+	}
+}
+
+func entryCEFRSourceSignalResponses(signals []model.EntryCEFRSourceSignal) []CEFRSourceSignalResponse {
+	results := make([]CEFRSourceSignalResponse, 0, len(signals))
+	for _, signal := range signals {
+		results = append(results, CEFRSourceSignalResponse{
+			Source:    signal.CEFRSource,
+			Level:     int(signal.CEFRLevel),
+			LevelName: cefrLevelName(int(signal.CEFRLevel)),
+			RunID:     signal.CEFRRunID,
+			UpdatedAt: timePtr(signal.UpdatedAt),
+		})
+	}
+	return results
+}
+
+func senseCEFRSourceSignalResponses(signals []model.SenseCEFRSourceSignal) []CEFRSourceSignalResponse {
+	results := make([]CEFRSourceSignalResponse, 0, len(signals))
+	for _, signal := range signals {
+		results = append(results, CEFRSourceSignalResponse{
+			Source:    signal.CEFRSource,
+			Level:     int(signal.CEFRLevel),
+			LevelName: cefrLevelName(int(signal.CEFRLevel)),
+			RunID:     signal.CEFRRunID,
+			UpdatedAt: timePtr(signal.UpdatedAt),
+		})
+	}
+	return results
+}
+
+func etymologyResponse(etymology *model.EntryEtymology) *EtymologyResponse {
+	if etymology == nil || (etymology.EntryID == 0 && strings.TrimSpace(etymology.EtymologyTextRaw) == "") {
+		return nil
+	}
+	return &EtymologyResponse{
+		Source:    etymology.Source,
+		RunID:     etymology.SourceRunID,
+		TextRaw:   etymology.EtymologyTextRaw,
+		TextClean: etymology.EtymologyTextClean,
+		UpdatedAt: timePtr(etymology.UpdatedAt),
+	}
+}
+
+func glossENResponses(glosses []model.SenseGlossEN) []GlossENResponse {
+	results := make([]GlossENResponse, 0, len(glosses))
+	for _, gloss := range glosses {
+		results = append(results, GlossENResponse{
+			GlossID:    gloss.ID,
+			GlossOrder: int(gloss.GlossOrder),
+			TextEN:     gloss.TextEN,
+		})
+	}
+	return results
+}
+
+func glossZHResponses(glosses []model.SenseGlossZH) []GlossZHResponse {
+	results := make([]GlossZHResponse, 0, len(glosses))
+	for _, gloss := range glosses {
+		results = append(results, GlossZHResponse{
+			GlossID:      gloss.ID,
+			Source:       gloss.Source,
+			SourceRunID:  gloss.SourceRunID,
+			GlossOrder:   int(gloss.GlossOrder),
+			TextZHHans:   gloss.TextZHHans,
+			DialectCode:  gloss.DialectCode,
+			Romanization: gloss.Romanization,
+			IsPrimary:    gloss.IsPrimary,
+		})
+	}
+	return results
+}
+
+func senseLabelResponses(labels []model.SenseLabel) []SenseLabelResponse {
+	results := make([]SenseLabelResponse, 0, len(labels))
+	for _, label := range labels {
+		results = append(results, SenseLabelResponse{
+			Type:     label.LabelType,
+			TypeName: labelTypeDisplayName(label.LabelType),
+			Code:     label.LabelCode,
+			Name:     labelDisplayName(label.LabelType, label.LabelCode),
+			Order:    int(label.LabelOrder),
+		})
+	}
+	return results
+}
+
+func lexicalRelationResponses(relations []model.LexicalRelation) []LexicalRelationResponse {
+	results := make([]LexicalRelationResponse, 0, len(relations))
+	for _, relation := range relations {
+		results = append(results, LexicalRelationResponse{
+			RelationType:         relation.RelationType,
+			RelationName:         relationDisplayName(relation.RelationType),
+			TargetText:           relation.TargetText,
+			TargetTextNormalized: relation.TargetTextNormalized,
+			DisplayOrder:         int(relation.DisplayOrder),
+		})
+	}
+	return results
+}
+
+func labelTypeDisplayName(code string) string {
+	if name, ok := model.LabelTypeCodeToName()[code]; ok {
+		return name
+	}
+	return code
+}
+
+func labelDisplayName(labelType, code string) string {
+	if byType, ok := model.LabelCodeToNameByType()[labelType]; ok {
+		if name, ok := byType[code]; ok {
+			return name
+		}
+	}
+	return code
+}
+
+func relationDisplayName(code string) string {
+	if name, ok := model.RelationTypeCodeToName()[code]; ok {
+		return name
+	}
+	return code
+}
+
+func timePtr(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
+}
+
+func cefrLevelName(level int) string {
+	if level <= 0 {
+		return ""
+	}
+	if name, ok := model.CEFRLevelCodeToName()[int16(level)]; ok && name != "unknown" {
+		return name
+	}
+	return ""
+}
+
+func posDisplayName(code string) string {
+	if name, ok := model.POSCodeToName()[code]; ok {
+		return name
+	}
+	if strings.TrimSpace(code) == "" {
+		return "unknown"
+	}
+	return code
+}
+
+func accentDisplayName(code string) string {
+	if name, ok := model.AccentCodeToName()[code]; ok {
+		return name
+	}
+	if strings.TrimSpace(code) == "" {
+		return "unknown"
+	}
+	return code
 }

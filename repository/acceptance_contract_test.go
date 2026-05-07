@@ -12,17 +12,15 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/simp-lee/isdict-commons/model"
 )
 
 type repositoryContractStub struct{}
 
-func (repositoryContractStub) GetWordByHeadword(context.Context, string, bool, bool, bool) (*model.Word, *model.WordVariant, error) {
+func (repositoryContractStub) GetWordByHeadword(context.Context, string, bool, bool, bool) (*Word, *WordVariant, error) {
 	return nil, nil, nil
 }
 
-func (repositoryContractStub) GetWordsByHeadwords(context.Context, []string, bool, bool, bool) ([]model.Word, error) {
+func (repositoryContractStub) GetWordsByHeadwords(context.Context, []string, bool, bool, bool) ([]Word, error) {
 	return nil, nil
 }
 
@@ -30,37 +28,37 @@ func (repositoryContractStub) GetWordsByVariants(context.Context, []string, bool
 	return nil, nil
 }
 
-func (repositoryContractStub) GetWordsByVariant(context.Context, string, *int, bool, bool) ([]model.Word, []model.WordVariant, error) {
+func (repositoryContractStub) GetWordsByVariant(context.Context, string, *string, bool, bool) ([]Word, []WordVariant, error) {
 	return nil, nil, nil
 }
 
-func (repositoryContractStub) ListSlugBootstrapHeadwords(context.Context) ([]string, error) {
+func (repositoryContractStub) ListFeaturedCandidateHeadwords(context.Context) ([]string, error) {
 	return nil, nil
 }
 
-func (repositoryContractStub) SearchWords(context.Context, string, *int, *int, *int, *int, *int, *int, int, int) ([]model.Word, int64, error) {
+func (repositoryContractStub) SearchWords(context.Context, string, *string, *int, *int, *int, *int, *int, int, int) ([]Word, int64, error) {
 	return nil, 0, nil
 }
 
-func (repositoryContractStub) SuggestWords(context.Context, string, *int, *int, *int, *int, *int, int) ([]model.Word, error) {
+func (repositoryContractStub) SuggestWords(context.Context, string, *int, *int, *int, *int, *int, int) ([]Word, error) {
 	return nil, nil
 }
 
-func (repositoryContractStub) SearchPhrases(context.Context, string, int) ([]model.Word, error) {
+func (repositoryContractStub) SearchPhrases(context.Context, string, int) ([]Word, error) {
 	return nil, nil
 }
 
-func (repositoryContractStub) GetPronunciationsByWordID(context.Context, uint, *int) ([]model.Pronunciation, error) {
+func (repositoryContractStub) GetPronunciationsByWordID(context.Context, int64, *string) ([]Pronunciation, error) {
 	return nil, nil
 }
 
-func (repositoryContractStub) GetSensesByWordID(context.Context, uint, *int) ([]model.Sense, error) {
+func (repositoryContractStub) GetSensesByWordID(context.Context, int64, *string) ([]Sense, error) {
 	return nil, nil
 }
 
 var _ WordRepository = (*repositoryContractStub)(nil)
 
-// AC-1: 导出 repository.WordRepository 接口，保持 10 个方法签名与当前契约一致
+// AC-1: 导出 WordRepository 接口，保持 10 个方法签名与当前契约一致
 func TestRepository_WordRepositoryContractCompile(t *testing.T) {
 	t.Helper()
 
@@ -70,7 +68,7 @@ func TestRepository_WordRepositoryContractCompile(t *testing.T) {
 		"GetWordsByHeadwords",
 		"GetWordsByVariants",
 		"GetWordsByVariant",
-		"ListSlugBootstrapHeadwords",
+		"ListFeaturedCandidateHeadwords",
 		"SearchWords",
 		"SuggestWords",
 		"SearchPhrases",
@@ -92,11 +90,11 @@ func TestRepository_WordRepositoryContractCompile(t *testing.T) {
 // AC-3: 导出 repository.BatchVariantMatch，字段为 Word 和 Variant
 func TestBatchVariantMatch_ExposesWordAndVariantFields(t *testing.T) {
 	match := BatchVariantMatch{
-		Word: model.Word{
+		Word: Word{
 			Headword: "example",
 		},
-		Variant: model.WordVariant{
-			VariantText: "examples",
+		Variant: WordVariant{
+			FormText: "examples",
 		},
 	}
 
@@ -104,8 +102,8 @@ func TestBatchVariantMatch_ExposesWordAndVariantFields(t *testing.T) {
 		t.Fatalf("Word.Headword = %q, want %q", match.Word.Headword, "example")
 	}
 
-	if match.Variant.VariantText != "examples" {
-		t.Fatalf("Variant.VariantText = %q, want %q", match.Variant.VariantText, "examples")
+	if match.Variant.FormText != "examples" {
+		t.Fatalf("Variant.FormText = %q, want %q", match.Variant.FormText, "examples")
 	}
 
 	matchType := reflect.TypeOf(match)
@@ -117,16 +115,16 @@ func TestBatchVariantMatch_ExposesWordAndVariantFields(t *testing.T) {
 	if !ok {
 		t.Fatal("BatchVariantMatch missing Word field")
 	}
-	if !wordField.IsExported() || wordField.Type != reflect.TypeOf(model.Word{}) {
-		t.Fatalf("Word field = exported:%v type:%v, want exported:true type:%v", wordField.IsExported(), wordField.Type, reflect.TypeOf(model.Word{}))
+	if !wordField.IsExported() || wordField.Type != reflect.TypeOf(Word{}) {
+		t.Fatalf("Word field = exported:%v type:%v, want exported:true type:%v", wordField.IsExported(), wordField.Type, reflect.TypeOf(Word{}))
 	}
 
 	variantField, ok := matchType.FieldByName("Variant")
 	if !ok {
 		t.Fatal("BatchVariantMatch missing Variant field")
 	}
-	if !variantField.IsExported() || variantField.Type != reflect.TypeOf(model.WordVariant{}) {
-		t.Fatalf("Variant field = exported:%v type:%v, want exported:true type:%v", variantField.IsExported(), variantField.Type, reflect.TypeOf(model.WordVariant{}))
+	if !variantField.IsExported() || variantField.Type != reflect.TypeOf(WordVariant{}) {
+		t.Fatalf("Variant field = exported:%v type:%v, want exported:true type:%v", variantField.IsExported(), variantField.Type, reflect.TypeOf(WordVariant{}))
 	}
 }
 
@@ -200,6 +198,7 @@ func isAllowedProductionImport(importPath string) bool {
 	}
 
 	allowedPrefixes := []string{
+		"github.com/lib/pq",
 		"github.com/simp-lee/isdict-data",
 		"github.com/simp-lee/isdict-commons",
 		"gorm.io/gorm",

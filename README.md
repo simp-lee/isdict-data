@@ -7,8 +7,8 @@
 ## 设计目标
 
 - 通过 Go 包直接暴露词典查询能力，不引入 HTTP、日志、外部通用缓存等运行时耦合。
-- 保持原查询语义稳定，包括词头回退、变体匹配、搜索排序、去重和 pg_trgm 模糊匹配行为。
-- 非测试代码的直接依赖收敛到 `github.com/simp-lee/isdict-commons` 与 `gorm.io/gorm`。
+- 保持当前查询语义清晰，包括词头解析、变体匹配、搜索排序、去重和 pg_trgm 模糊匹配行为。
+- 非测试代码的直接依赖收敛到 `github.com/simp-lee/isdict-commons`、`gorm.io/gorm` 与 PostgreSQL 数组扫描所需的 `github.com/lib/pq`。
 - 遵循 Go 的常见约定：接收接口，返回具体类型；接口由使用方按需定义。
 
 ## 包结构
@@ -20,15 +20,16 @@
 - 导出 `WordRepository` 接口，包含 10 个数据访问方法。
 - 导出 `NewRepository(db *gorm.DB) *Repository`。
 - 导出 `BatchVariantMatch`、`ErrWordNotFound`、`ErrVariantNotFound`。
+- 基于 `isdict-commons v1.0.7+` 的 19 表 schema 读取数据；完整词条路径会覆盖 import run、entry/source CEFR 证据、词源、中文摘要、IPA、音频、forms/aliases、sense gloss、sense labels、examples、lexical relations 和学习信号。
 - 保持现有查询行为，包括：
-  - `GetWordByHeadword` 的精确匹配、规范化匹配、变体回退链路。
-  - `SearchWords`、`SuggestWords`、`SearchPhrases` 的匹配优先级与稳定排序。
+  - `GetWordByHeadword` 的精确匹配、规范化匹配、entry_forms 解析链路。
+  - `SearchWords`、`SuggestWords`、`SearchPhrases` 基于 `entry_search_terms` read model 的匹配优先级与稳定排序。
   - 基于 PostgreSQL `pg_trgm` 扩展的模糊搜索能力。
-  - `ListSlugBootstrapHeadwords` 用于 web 启动期一次性枚举 canonical headword，构建 slug 索引。
+  - `ListFeaturedCandidateHeadwords` 基于 `featured_candidates` read model 一次性枚举高频或带 CEFR 信号的 featured 候选 headword。
 
 ### `service`
 
-负责业务编排、返回模型转换、批量查询与参数限流。
+负责业务编排、返回模型转换、批量查询与参数限流。响应 DTO 由本包 `service` 提供；`isdict-commons v1` 不再导出 API 响应结构体。
 
 - 导出 `WordService` 结构体及 10 个公开方法。
 - 导出 `NewWordService(repo repository.WordRepository, cfg ServiceConfig) *WordService`。
@@ -167,20 +168,20 @@ func main() {
 
 ## 常见调用方式
 
-### 启动期 slug bootstrap
+### Featured 候选池
 
 ```go
-headwords, err := repo.ListSlugBootstrapHeadwords(ctx)
+headwords, err := repo.ListFeaturedCandidateHeadwords(ctx)
 if err != nil {
 	panic(err)
 }
 
 for _, headword := range headwords {
-	// 将 canonical headword 交给应用侧 slug builder 建索引
+	// 将高质量候选 headword 交给应用侧 featured 推荐池
 }
 ```
 
-这个能力的用途仅限于 web 启动期 slug bootstrap。消费端不需要直接读取 `words` 表，也不需要知道底层 SQL 或 GORM 查询细节。
+这个能力用于构建 featured 推荐候选池，直接读取上游 `featured_candidates` read model，只返回高频或带 CEFR 等学习信号的 headword，避免从全量词库中随机抽取。
 
 如果业务只是想拿首页推荐词或短语，不建议直接消费这份列表；应优先调用 `service.RandomFeaturedWords` / `service.RandomFeaturedPhrases`，由 service 层负责候选池缓存、分组和精确词头 hydrate。
 
@@ -207,14 +208,12 @@ items, err := svc.GetWordsByVariant(ctx, "learnt", &kind, true, true)
 ### 批量查词
 
 ```go
-import "github.com/simp-lee/isdict-commons/model"
-
-items, meta, err := svc.GetWordsBatch(ctx, &model.BatchRequest{
+items, meta, err := svc.GetWordsBatch(ctx, &service.BatchRequest{
 	Words: []string{"learn", "learnt", "  learn  "},
 })
 ```
 
-批量查询会先清洗输入，再按主词头批量命中，未命中的部分自动回退到变体匹配。超出配置上限时返回 `service.ErrBatchLimitExceeded`。
+批量查询会先清洗输入，再按主词头批量命中，未命中的部分通过 `entry_forms` 批量解析。超出配置上限时返回 `service.ErrBatchLimitExceeded`。
 
 ### 搜索与联想
 
@@ -230,6 +229,10 @@ phrases, err := svc.SearchPhrases(ctx, "look", 10)
 - `SuggestWords`: 前缀最少 3 个规范化字符、最多 50 个裁剪后字符；`limit <= 0` 时默认 `10`，并受 `ServiceConfig.SuggestMaxLimit` 限制
 - `SearchPhrases`: 关键字最少 1 个字符、最多 50 个字符；`limit <= 0` 时默认 `10`，最大固定为 `50`
 
+`SearchWords` 的 `pos`、`GetSenses` 的 `posCode` 和 `GetPronunciations` 的 `accentCode` 均使用 `isdict-commons/model` 中的文本 code，例如 `model.POSNoun`、`model.AccentBritish`。
+
+实现细节上，搜索、联想和短语搜索都读取上游 `entry_search_terms` read model，不再对 `entries` / `entry_forms` 做运行时 trigram union；学习信号过滤也直接使用该 read model 中冗余的 `cefr_level`、`frequency_rank` 等字段。
+
 ### 首页 featured 词条与短语
 
 ```go
@@ -237,14 +240,14 @@ featuredWords, err := svc.RandomFeaturedWords(ctx, 6)
 featuredPhrases, err := svc.RandomFeaturedPhrases(ctx, 4)
 ```
 
-这两个方法都返回 `[]model.SuggestResponse`，并共享同一套错误语义：
+这两个方法都返回 `[]service.SuggestResponse`，并共享同一套错误语义：
 
 - `service.ErrFeaturedLimitInvalid`: `limit <= 0` 或超过 `ServiceConfig.BatchMaxSize`
 - `service.ErrFeaturedCandidatesExhausted`: 当前候选池不足以满足请求数量
 - `service.ErrFeaturedBatchIncomplete`: 候选采样成功，但后续精确词头 hydrate 未返回完整结果
 - `service.ErrFeaturedSourceUnavailable`: 加载候选池或读取词条时的上游故障
 
-实现细节上，service 会按单词/短语分组缓存 canonical headword 候选池，再对抽样结果做精确词头回填；不会对 featured 请求启用变体回退，避免返回错误 canonical headword。
+实现细节上，service 会按单词/短语分组缓存 canonical headword 候选池，再对抽样结果做精确词头回填；featured 请求只做 canonical headword 命中，不走 `entry_forms` 解析，避免返回错误 canonical headword。
 
 ### 读取发音与释义
 
@@ -253,18 +256,27 @@ pronunciations, err := svc.GetPronunciations(ctx, "learn", nil)
 senses, err := svc.GetSenses(ctx, "learn", nil, "both")
 ```
 
-`GetPronunciations` 会先解析词条，再按 `word_id` 读取发音；`GetSenses` 支持按词性过滤，`lang` 通常使用 `both`、`en`、`zh` 三个值控制释义和例句的语言裁剪，未命中这三个值时当前实现等价于保留双语字段。
+`GetPronunciations` 会先解析词条，再按 `entry_id` 读取 IPA 发音；完整词条响应还会在 `pronunciation_audios` 中返回 commons v1 的音频文件记录。`GetSenses` 支持按 commons v1 的文本 POS code 过滤，`lang` 通常使用 `both`、`en`、`zh` 三个值控制释义和例句的语言裁剪，未命中这三个值时当前实现等价于保留双语字段。
 
 ## 返回字段说明
 
-词条相关响应中的注解字段直接复用 `isdict-commons/model.WordAnnotations`。其中 `school_level` 为整型透传字段，当前约定如下：
+词条相关响应中的注解字段使用本包的 `service.WordAnnotations`。其中 `school_level` 为整型透传字段，当前约定如下：
 
 - `0`: unknown
 - `1`: 初中
 - `2`: 高中
 - `3`: 大学
 
-`isdict-data` 当前不会把 `school_level` 转换为中文名称，而是按上游模型定义原样透传整数值，方便消费端自行决定展示方式。
+`isdict-data` 当前不会把 `school_level` 转换为中文名称，而是按上游学习信号定义原样透传整数值，方便消费端自行决定展示方式。
+
+`cefr_level`、`cet_level`、`oxford_level`、`collins_stars` 等学习信号按 commons v1 的数值 code 原样透传；`cefr_level_name` 只作为便捷展示字段。
+
+完整词条响应会直接暴露 commons v1 新增数据，避免丢失上游信息：
+
+- 词条级：`source_run`、`cefr_source_signals`、`etymology`、`lexical_relations`
+- 发音级：`pronunciations` 和 `pronunciation_audios`
+- 义项级：`definitions_en`、`definitions_zh`、`labels`、`examples`、`cefr_source_signals`、`lexical_relations`
+- 变体级：`variants` 中包含 `form_text`、`relation_kind`、`form_type`、`source_relations` 和 `display_order`
 
 ## 错误语义
 
@@ -331,12 +343,35 @@ go vet ./...
 TEST_POSTGRES_DSN='host=127.0.0.1 user=test password=test dbname=isdict_test sslmode=disable' go test ./repository
 ```
 
+### 只读真实库 smoke 与性能测试
+
+真实库只读测试不会使用 `TEST_POSTGRES_DSN`，避免触发集成测试里的 migration/reset 逻辑。它们通过 build tag 显式启用，并用 PostgreSQL read-only transaction 包裹查询。
+
+只读 smoke 测试：
+
+```bash
+READONLY_SMOKE_DSN='host=127.0.0.1 port=5432 user=isdict password=... dbname=isdict_db sslmode=disable TimeZone=Asia/Shanghai' \
+go test ./repository -tags readonlydb -run TestReadOnlyProductionDatabaseSmoke -count=1 -v
+```
+
+该 smoke 测试会校验 commons v1.0.7 的 19 张表存在，确认 `entry_search_terms` 与 `entries` / `entry_forms` 计数一致、`featured_candidates` 非空，并实际执行完整词条、变体、搜索、联想、短语、发音和义项读取。
+
+只读性能基准：
+
+```bash
+READONLY_PERF_DSN='host=127.0.0.1 port=5432 user=isdict password=... dbname=isdict_db sslmode=disable TimeZone=Asia/Shanghai' \
+go test ./repository -tags perfdb -run '^$' -bench BenchmarkReadOnly -benchtime=1x -count=1
+```
+
+性能基准覆盖 repository 与 service 的主要读取路径，包括精确词头、规范化词头、`entry_forms` 解析的最小/完整加载、变体反查、批量查询、featured 候选池、搜索/联想的基础路径、POS 与学习信号过滤、`entry_forms` 命中、offset、no-result、短语搜索、发音读取与 accent 过滤、义项读取与 POS 过滤，以及 featured cold-cache / warm-cache 查询。默认建议先用 `-benchtime=1x` 做全路径巡检，再对慢查询单独提高 benchtime 重复测量。
+
 ## 稳定约束
 
-这个模块的首要目标是复用现有词典查询能力，而不是重写查询内核。因此在后续维护中，以下内容应被视为兼容性敏感区域：
+这个模块的首要目标是提供进程内词典查询能力，而不是重写查询内核。因此在后续维护中，以下内容应被视为行为敏感区域：
 
-- `GetWordByHeadword` 的多步回退链路
-- `SearchWords` / `SuggestWords` / `SearchPhrases` 的排序与去重
+- `GetWordByHeadword` 的 headword / `entry_forms` 解析链路
+- `SearchWords` / `SuggestWords` / `SearchPhrases` 对 `entry_search_terms` 的排序与去重
+- `featured_candidates` 候选池读取语义
 - `pg_trgm` 相关查询能力
 - service 层对 not-found、featured 和批量限制错误的公开语义
 - featured 词条对 canonical headword 的精确回填语义，以及其候选池缓存行为
