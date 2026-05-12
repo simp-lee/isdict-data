@@ -155,9 +155,6 @@ func TestRepository_PostgresCommonsV1FullHydration(t *testing.T) {
 	if len(word.WordVariants) != 1 || word.WordVariants[0].FormText != "learnt" {
 		t.Fatalf("entry forms not hydrated: %#v", word.WordVariants)
 	}
-	if len(word.LexicalRelations) != 1 || word.LexicalRelations[0].TargetText != "learner" {
-		t.Fatalf("entry lexical relations not hydrated: %#v", word.LexicalRelations)
-	}
 	if len(word.Senses) != 1 {
 		t.Fatalf("senses len = %d, want 1", len(word.Senses))
 	}
@@ -175,8 +172,14 @@ func TestRepository_PostgresCommonsV1FullHydration(t *testing.T) {
 	if len(sense.GlossesZH) != 1 || sense.GlossesZH[0].TextZHHans != "学习知识" {
 		t.Fatalf("Chinese glosses not hydrated: %#v", sense.GlossesZH)
 	}
-	if len(sense.Labels) != 1 || len(sense.Examples) != 1 || len(sense.LexicalRelations) != 1 {
-		t.Fatalf("sense related data not hydrated: labels=%#v examples=%#v relations=%#v", sense.Labels, sense.Examples, sense.LexicalRelations)
+	if len(sense.Labels) != 1 || len(sense.Examples) != 1 {
+		t.Fatalf("sense related data not hydrated: labels=%#v examples=%#v", sense.Labels, sense.Examples)
+	}
+	if len(word.EntryDefinitions) != 1 || word.EntryDefinitions[0].Source != "school" || word.EntryDefinitions[0].TextZHHans != "学习" {
+		t.Fatalf("entry definitions not hydrated: %#v", word.EntryDefinitions)
+	}
+	if len(word.EntryExamples) != 1 || word.EntryExamples[0].Source != "school" || word.EntryExamples[0].SentenceEN != "I learn at school." {
+		t.Fatalf("entry examples not hydrated: %#v", word.EntryExamples)
 	}
 }
 
@@ -184,17 +187,17 @@ func TestRepository_PostgresCoreQueriesUseCommonsV1Schema(t *testing.T) {
 	repo, db := newPostgresIntegrationRepository(t)
 	fixture := seedCommonsV1Fixture(t, db)
 
-	headwords, err := repo.ListFeaturedCandidateHeadwords(context.Background())
+	candidates, err := repo.ListFeaturedCandidates(context.Background())
 	if err != nil {
-		t.Fatalf("ListFeaturedCandidateHeadwords() error = %v", err)
+		t.Fatalf("ListFeaturedCandidates() error = %v", err)
 	}
-	if len(headwords) != 1 || headwords[0] != "learn" {
-		t.Fatalf("headwords = %#v, want [learn]", headwords)
+	if len(candidates) != 1 || candidates[0].EntryID != fixture.word.ID || candidates[0].Headword != "learn" {
+		t.Fatalf("candidates = %#v, want fixture learn entry", candidates)
 	}
 
 	pos := commonmodel.POSVerb
 	cefr := 2
-	words, total, err := repo.SearchWords(context.Background(), "lear", &pos, &cefr, nil, nil, nil, nil, 10, 0)
+	words, total, err := repo.SearchWords(context.Background(), "lear", SearchOptions{POS: &pos, CEFRLevel: &cefr, Limit: 10})
 	if err != nil {
 		t.Fatalf("SearchWords() error = %v", err)
 	}
@@ -202,7 +205,7 @@ func TestRepository_PostgresCoreQueriesUseCommonsV1Schema(t *testing.T) {
 		t.Fatalf("SearchWords() = words:%#v total:%d, want fixture", words, total)
 	}
 
-	formWords, formTotal, err := repo.SearchWords(context.Background(), "learnt", nil, nil, nil, nil, nil, nil, 10, 0)
+	formWords, formTotal, err := repo.SearchWords(context.Background(), "learnt", SearchOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("SearchWords(form) error = %v", err)
 	}
@@ -210,7 +213,7 @@ func TestRepository_PostgresCoreQueriesUseCommonsV1Schema(t *testing.T) {
 		t.Fatalf("SearchWords(form) = words:%#v total:%d, want fixture", formWords, formTotal)
 	}
 
-	suggestions, err := repo.SuggestWords(context.Background(), "lea", nil, nil, nil, nil, nil, 5)
+	suggestions, err := repo.SuggestWords(context.Background(), "lea", SuggestOptions{Limit: 5})
 	if err != nil {
 		t.Fatalf("SuggestWords() error = %v", err)
 	}
@@ -218,7 +221,7 @@ func TestRepository_PostgresCoreQueriesUseCommonsV1Schema(t *testing.T) {
 		t.Fatalf("SuggestWords() = %#v, want learn", suggestions)
 	}
 
-	formSuggestions, err := repo.SuggestWords(context.Background(), "learnt", nil, nil, nil, nil, nil, 5)
+	formSuggestions, err := repo.SuggestWords(context.Background(), "learnt", SuggestOptions{Limit: 5})
 	if err != nil {
 		t.Fatalf("SuggestWords(form) error = %v", err)
 	}
@@ -244,11 +247,136 @@ func TestRepository_PostgresCoreQueriesUseCommonsV1Schema(t *testing.T) {
 	}
 }
 
+func TestRepository_PostgresHeadwordRelationGroupsUseOEWNEdges(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedHeadwordRelationGroupFixture(t, db)
+
+	groups, err := repo.GetHeadwordRelationGroups(context.Background(), "Head", commonmodel.HeadwordRelationPOSCodeNoun, RelationQueryOptions{})
+	if err != nil {
+		t.Fatalf("GetHeadwordRelationGroups() error = %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("groups len = %d, want 2: %#v", len(groups), groups)
+	}
+	if groups[0].RelationType != commonmodel.RelationTypeSynonym {
+		t.Fatalf("first relation type = %q, want synonym", groups[0].RelationType)
+	}
+	if groups[1].RelationType != commonmodel.RelationTypeAntonym {
+		t.Fatalf("second relation type = %q, want antonym", groups[1].RelationType)
+	}
+
+	synonyms := groups[0].Items
+	if got, want := relationItemTargets(synonyms), []string{"chief", "leader", "top", "captain", "director"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("synonym targets = %v, want %v", got, want)
+	}
+	if synonyms[0].TargetHeadword != "Chief" {
+		t.Fatalf("local target headword display = %q, want Chief", synonyms[0].TargetHeadword)
+	}
+	if synonyms[2].EvidenceCount != 2 {
+		t.Fatalf("top evidence_count = %d, want 2", synonyms[2].EvidenceCount)
+	}
+	for _, item := range synonyms {
+		if !item.HasTargetEntry {
+			t.Fatalf("default relation query returned missing target entry: %#v", item)
+		}
+		if item.TargetPOSCode != commonmodel.HeadwordRelationPOSCodeNoun {
+			t.Fatalf("target POS code = %d, want noun", item.TargetPOSCode)
+		}
+	}
+	assertRelationTargetAbsent(t, groups, "caput")
+	assertRelationTargetAbsent(t, groups, "head")
+	assertRelationTypeAbsent(t, groups, commonmodel.RelationTypeDerivation)
+	assertRelationTypeAbsent(t, groups, commonmodel.RelationTypeEvent)
+	assertRelationTypeAbsent(t, groups, commonmodel.RelationTypeAgent)
+
+	limited, err := repo.GetHeadwordRelationGroups(context.Background(), norm.NormalizeHeadword("head"), commonmodel.HeadwordRelationPOSCodeNoun, RelationQueryOptions{LimitPerRelationType: 2})
+	if err != nil {
+		t.Fatalf("GetHeadwordRelationGroups(limit) error = %v", err)
+	}
+	if len(limited) == 0 || len(limited[0].Items) != 2 {
+		t.Fatalf("limited synonym item count = %#v, want 2 items", limited)
+	}
+
+	withMissing, err := repo.GetHeadwordRelationGroups(context.Background(), norm.NormalizeHeadword("head"), commonmodel.HeadwordRelationPOSCodeNoun, RelationQueryOptions{IncludeMissingTargets: true})
+	if err != nil {
+		t.Fatalf("GetHeadwordRelationGroups(include missing) error = %v", err)
+	}
+	missing := findRelationTarget(withMissing, "caput")
+	if missing == nil || missing.HasTargetEntry {
+		t.Fatalf("expected caput missing target when IncludeMissingTargets=true, got %#v", missing)
+	}
+
+	withSelf, err := repo.GetHeadwordRelationGroups(context.Background(), norm.NormalizeHeadword("head"), commonmodel.HeadwordRelationPOSCodeNoun, RelationQueryOptions{IncludeSelfTargets: true})
+	if err != nil {
+		t.Fatalf("GetHeadwordRelationGroups(include self) error = %v", err)
+	}
+	self := findRelationTarget(withSelf, "head")
+	if self == nil || !self.HasTargetEntry {
+		t.Fatalf("expected self target when IncludeSelfTargets=true, got %#v", self)
+	}
+}
+
+func TestRepository_PostgresEntryGroupByHeadwordReturnsAllPOS(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedHeadwordRelationGroupFixture(t, db)
+
+	words, variant, err := repo.GetEntryGroupByHeadword(context.Background(), "head", false, false, false)
+	if err != nil {
+		t.Fatalf("GetEntryGroupByHeadword(head) error = %v", err)
+	}
+	if variant != nil {
+		t.Fatalf("direct headword group returned queried variant: %#v", variant)
+	}
+	if got, want := entryGroupPOS(words), []string{commonmodel.POSNoun, commonmodel.POSVerb, commonmodel.POSAdjective}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("entry group POS = %v, want %v", got, want)
+	}
+
+	words, variant, err = repo.GetEntryGroupByHeadword(context.Background(), "headed", false, false, false)
+	if err != nil {
+		t.Fatalf("GetEntryGroupByHeadword(variant) error = %v", err)
+	}
+	if variant == nil || variant.FormText != "headed" {
+		t.Fatalf("variant metadata = %#v, want headed", variant)
+	}
+	if got, want := entryGroupPOS(words), []string{commonmodel.POSNoun, commonmodel.POSVerb, commonmodel.POSAdjective}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("variant entry group POS = %v, want %v", got, want)
+	}
+}
+
+func TestRepository_PostgresGetWordsByHeadwordsUsesStableEntryOrder(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedHeadwordRelationGroupFixture(t, db)
+
+	words, err := repo.GetWordsByHeadwords(context.Background(), []string{"Head"}, false, false, false)
+	if err != nil {
+		t.Fatalf("GetWordsByHeadwords() error = %v", err)
+	}
+	if got, want := entryGroupPOS(words), []string{commonmodel.POSNoun, commonmodel.POSVerb, commonmodel.POSAdjective}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("GetWordsByHeadwords POS = %v, want %v", got, want)
+	}
+}
+
+func TestRepository_PostgresGetWordsByHeadwordsRanksQualityBeforePOS(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedSuggestWordsDuplicateHeadwordFixture(t, db)
+
+	words, err := repo.GetWordsByHeadwords(context.Background(), []string{"move"}, false, false, false)
+	if err != nil {
+		t.Fatalf("GetWordsByHeadwords(move) error = %v", err)
+	}
+	if len(words) < 2 {
+		t.Fatalf("GetWordsByHeadwords(move) returned %d words, want multiple", len(words))
+	}
+	if words[0].ID != 101 || words[0].Pos != commonmodel.POSVerb {
+		t.Fatalf("first move entry = id:%d pos:%s, want quality-ranked verb id 101", words[0].ID, words[0].Pos)
+	}
+}
+
 func TestRepository_PostgresSuggestWordsDeduplicatesCanonicalHeadwords(t *testing.T) {
 	repo, db := newPostgresIntegrationRepository(t)
 	seedSuggestWordsDuplicateHeadwordFixture(t, db)
 
-	suggestions, err := repo.SuggestWords(context.Background(), "mov", nil, nil, nil, nil, nil, 10)
+	suggestions, err := repo.SuggestWords(context.Background(), "mov", SuggestOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("SuggestWords(mov) error = %v", err)
 	}
@@ -260,7 +388,7 @@ func TestRepository_PostgresSuggestWordsDeduplicatesCanonicalHeadwords(t *testin
 	assertSuggestionRepresentative(t, suggestions, "moving", 103)
 	assertSuggestionRepresentative(t, suggestions, "moved", 106)
 
-	limited, err := repo.SuggestWords(context.Background(), "mov", nil, nil, nil, nil, nil, 3)
+	limited, err := repo.SuggestWords(context.Background(), "mov", SuggestOptions{Limit: 3})
 	if err != nil {
 		t.Fatalf("SuggestWords(mov, limit 3) error = %v", err)
 	}
@@ -268,15 +396,15 @@ func TestRepository_PostgresSuggestWordsDeduplicatesCanonicalHeadwords(t *testin
 		t.Fatalf("SuggestWords(mov, limit 3) headwords = %s, want %s", got, want)
 	}
 
-	withFallback, err := repo.SuggestWords(context.Background(), "mov", nil, nil, nil, nil, nil, 5)
+	fullLimit, err := repo.SuggestWords(context.Background(), "mov", SuggestOptions{Limit: 5})
 	if err != nil {
 		t.Fatalf("SuggestWords(mov, limit 5) error = %v", err)
 	}
-	if got, want := strings.Join(suggestionHeadwords(withFallback), ","), "move,moving,moved,mover,motion"; got != want {
+	if got, want := strings.Join(suggestionHeadwords(fullLimit), ","), "move,moving,moved,mover,motion"; got != want {
 		t.Fatalf("SuggestWords(mov, limit 5) headwords = %s, want %s", got, want)
 	}
 
-	aliasSuggestions, err := repo.SuggestWords(context.Background(), "movt", nil, nil, nil, nil, nil, 10)
+	aliasSuggestions, err := repo.SuggestWords(context.Background(), "movt", SuggestOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("SuggestWords(alias) error = %v", err)
 	}
@@ -301,7 +429,7 @@ func TestRepository_PostgresSuggestWordsRanksHeadwordPrefixesBeforeFormPrefixes(
 		{ID: 2002, WordID: 202, FormText: "dice", RelationKind: commonmodel.RelationKindForm},
 	})
 
-	suggestions, err := repo.SuggestWords(context.Background(), "dic", nil, nil, nil, nil, nil, 10)
+	suggestions, err := repo.SuggestWords(context.Background(), "dic", SuggestOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("SuggestWords(dic) error = %v", err)
 	}
@@ -329,7 +457,7 @@ func TestRepository_PostgresSuggestWordsKeepsExactFormMatches(t *testing.T) {
 		{ID: 3001, WordID: 301, FormText: "learnt", RelationKind: commonmodel.RelationKindForm},
 	})
 
-	suggestions, err := repo.SuggestWords(context.Background(), "learnt", nil, nil, nil, nil, nil, 10)
+	suggestions, err := repo.SuggestWords(context.Background(), "learnt", SuggestOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("SuggestWords(learnt) error = %v", err)
 	}
@@ -347,12 +475,55 @@ func TestRepository_PostgresSuggestWordsRanksExactHeadwordBeforeExactForm(t *tes
 		{ID: 4001, WordID: 401, FormText: "dice", RelationKind: commonmodel.RelationKindForm},
 	})
 
-	suggestions, err := repo.SuggestWords(context.Background(), "dice", nil, nil, nil, nil, nil, 10)
+	suggestions, err := repo.SuggestWords(context.Background(), "dice", SuggestOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("SuggestWords(dice) error = %v", err)
 	}
 	if got, want := strings.Join(suggestionHeadwords(suggestions), ","), "dice,die"; got != want {
 		t.Fatalf("SuggestWords(dice) headwords = %s, want %s", got, want)
+	}
+}
+
+func TestRepository_PostgresSearchAndSuggestUseSchoolLevel(t *testing.T) {
+	repo, db := newPostgresIntegrationRepository(t)
+	seedSuggestWordsFixture(t, db, 500, []suggestWordFixtureEntry{
+		{ID: 501, Headword: "scan", Pos: commonmodel.POSVerb, FrequencyRank: 100, SchoolLevel: commonmodel.SchoolLevelUniversity},
+		{ID: 502, Headword: "scaffold", Pos: commonmodel.POSNoun, SchoolLevel: commonmodel.SchoolLevelMiddleSchool},
+		{ID: 503, Headword: "scala", Pos: commonmodel.POSNoun, SchoolLevel: commonmodel.SchoolLevelHighSchool},
+		{ID: 504, Headword: "scarce", Pos: commonmodel.POSAdjective},
+	}, nil)
+
+	schoolLevel := int(commonmodel.SchoolLevelMiddleSchool)
+	filtered, total, err := repo.SearchWords(context.Background(), "sca", SearchOptions{SchoolLevel: &schoolLevel, Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchWords(school filter) error = %v", err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].Headword != "scaffold" {
+		t.Fatalf("SearchWords(school filter) = words:%#v total:%d, want scaffold", filtered, total)
+	}
+
+	words, _, err := repo.SearchWords(context.Background(), "sca", SearchOptions{Limit: 3})
+	if err != nil {
+		t.Fatalf("SearchWords(school order) error = %v", err)
+	}
+	if got, want := strings.Join(suggestionHeadwords(words), ","), "scan,scaffold,scala"; got != want {
+		t.Fatalf("SearchWords(school order) headwords = %s, want %s", got, want)
+	}
+
+	suggestions, err := repo.SuggestWords(context.Background(), "sca", SuggestOptions{Limit: 3})
+	if err != nil {
+		t.Fatalf("SuggestWords(school order) error = %v", err)
+	}
+	if got, want := strings.Join(suggestionHeadwords(suggestions), ","), "scan,scaffold,scala"; got != want {
+		t.Fatalf("SuggestWords(school order) headwords = %s, want %s", got, want)
+	}
+
+	filteredSuggestions, err := repo.SuggestWords(context.Background(), "sca", SuggestOptions{SchoolLevel: &schoolLevel, Limit: 10})
+	if err != nil {
+		t.Fatalf("SuggestWords(school filter) error = %v", err)
+	}
+	if len(filteredSuggestions) != 1 || filteredSuggestions[0].Headword != "scaffold" {
+		t.Fatalf("SuggestWords(school filter) = %#v, want scaffold", filteredSuggestions)
 	}
 }
 
@@ -394,10 +565,12 @@ func allowFixtureIdentityOverrides(t *testing.T, db *gorm.DB) {
 		"sense_glosses_zh",
 		"sense_labels",
 		"sense_examples",
+		"entry_definitions",
+		"entry_examples",
 		"pronunciation_ipas",
 		"pronunciation_audios",
 		"entry_forms",
-		"lexical_relations",
+		"headword_relation_edges",
 		"entry_summaries_zh",
 		"entry_search_terms",
 	}
@@ -473,6 +646,11 @@ type suggestWordFixtureEntry struct {
 	Headword      string
 	Pos           string
 	FrequencyRank int
+	CEFRLevel     int16
+	OxfordLevel   int16
+	CETLevel      int16
+	CollinsStars  int16
+	SchoolLevel   int16
 }
 
 type suggestWordFixtureForm struct {
@@ -509,6 +687,11 @@ func seedSuggestWordsFixture(t *testing.T, db *gorm.DB, runID int64, entries []s
 		createRows(t, db, &commonmodel.EntryLearningSignal{
 			EntryID:       spec.ID,
 			FrequencyRank: spec.FrequencyRank,
+			CEFRLevel:     spec.CEFRLevel,
+			OxfordLevel:   spec.OxfordLevel,
+			CETLevel:      spec.CETLevel,
+			CollinsStars:  spec.CollinsStars,
+			SchoolLevel:   spec.SchoolLevel,
 			UpdatedAt:     now,
 		})
 	}
@@ -554,6 +737,31 @@ func seedCommonsV1Fixture(t *testing.T, db *gorm.DB) commonsV1Fixture {
 	if err := db.Omit(clause.Associations).Create(&importRun).Error; err != nil {
 		t.Fatalf("create import run: %v", err)
 	}
+	oewnRun := commonmodel.ImportRun{
+		ID:              2,
+		SourceName:      "oewn",
+		SourcePath:      "/data/english-wordnet-2025-json",
+		SourceDumpID:    "2025",
+		PipelineVersion: "v1",
+		Status:          commonmodel.ImportRunStatusCompleted,
+		StartedAt:       now,
+		FinishedAt:      &now,
+	}
+	if err := db.Omit(clause.Associations).Create(&oewnRun).Error; err != nil {
+		t.Fatalf("create OEWN import run: %v", err)
+	}
+	schoolRun := commonmodel.ImportRun{
+		ID:              3,
+		SourceName:      "school",
+		SourcePath:      "/data/school.json",
+		PipelineVersion: "v1",
+		Status:          commonmodel.ImportRunStatusCompleted,
+		StartedAt:       now,
+		FinishedAt:      &now,
+	}
+	if err := db.Omit(clause.Associations).Create(&schoolRun).Error; err != nil {
+		t.Fatalf("create school import run: %v", err)
+	}
 
 	word := Word{
 		ID:                 10,
@@ -579,6 +787,7 @@ func seedCommonsV1Fixture(t *testing.T, db *gorm.DB) commonsV1Fixture {
 			CETLevel:       1,
 			CETRunID:       int64Ptr(importRun.ID),
 			SchoolLevel:    2,
+			SchoolRunID:    int64Ptr(schoolRun.ID),
 			FrequencyRank:  123,
 			FrequencyCount: 456,
 			FrequencyRunID: int64Ptr(importRun.ID),
@@ -703,22 +912,52 @@ func seedCommonsV1Fixture(t *testing.T, db *gorm.DB) commonsV1Fixture {
 			ExampleOrder: 1,
 			SentenceEN:   "I learn quickly.",
 		},
-		&commonmodel.LexicalRelation{
-			ID:                   35,
-			EntryID:              word.ID,
-			SenseID:              int64Ptr(sense.ID),
-			RelationType:         commonmodel.RelationTypeSynonym,
-			TargetText:           "study",
-			TargetTextNormalized: "study",
-			DisplayOrder:         1,
+		&commonmodel.HeadwordRelationEdge{
+			ID:                       35,
+			SourceHeadword:           "learn",
+			SourceHeadwordNormalized: norm.NormalizeHeadword("learn"),
+			SourcePOSCode:            commonmodel.HeadwordRelationPOSCodeVerb,
+			RelationType:             commonmodel.RelationTypeSynonym,
+			TargetHeadword:           "study",
+			TargetHeadwordNormalized: norm.NormalizeHeadword("study"),
+			TargetPOSCode:            commonmodel.HeadwordRelationPOSCodeVerb,
+			SourceRelationType:       commonmodel.OEWNSourceRelationMembers,
+			SourceSynsetID:           "oewn-001-v",
+			TargetSynsetID:           "oewn-001-v",
+			ImportRunID:              oewnRun.ID,
 		},
-		&commonmodel.LexicalRelation{
-			ID:                   36,
-			EntryID:              word.ID,
-			RelationType:         commonmodel.RelationTypeDerived,
-			TargetText:           "learner",
-			TargetTextNormalized: "learner",
-			DisplayOrder:         1,
+	)
+
+	senseID := sense.ID
+	definitionEN := "to gain knowledge"
+	exampleZH := "我在学校学习。"
+	createRows(t, db,
+		&commonmodel.EntryDefinition{
+			ID:                  36,
+			EntryID:             word.ID,
+			SenseID:             &senseID,
+			POS:                 commonmodel.POSVerb,
+			Source:              "school",
+			SourceRunID:         schoolRun.ID,
+			DefinitionOrder:     1,
+			TextZHHans:          "学习",
+			TextEN:              &definitionEN,
+			NormalizedZHHansKey: "学习",
+			NormalizedENKey:     "to gain knowledge",
+			UpdatedAt:           now,
+		},
+		&commonmodel.EntryExample{
+			ID:                      37,
+			EntryID:                 word.ID,
+			SenseID:                 &senseID,
+			Source:                  "school",
+			SourceRunID:             schoolRun.ID,
+			ExampleOrder:            1,
+			SentenceEN:              "I learn at school.",
+			SentenceZHHans:          &exampleZH,
+			NormalizedSentenceENKey: "i learn at school",
+			NormalizedSentenceZHKey: "我在学校学习",
+			UpdatedAt:               now,
 		},
 	)
 
@@ -736,6 +975,114 @@ func seedCommonsV1Fixture(t *testing.T, db *gorm.DB) commonsV1Fixture {
 	}
 }
 
+func seedHeadwordRelationGroupFixture(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	importRun := commonmodel.ImportRun{
+		ID:              900,
+		SourceName:      "wiktionary",
+		SourcePath:      "/data/head.xml",
+		PipelineVersion: "v1",
+		Status:          commonmodel.ImportRunStatusCompleted,
+		StartedAt:       now,
+		FinishedAt:      &now,
+	}
+	oewnRun := commonmodel.ImportRun{
+		ID:              901,
+		SourceName:      "oewn",
+		SourcePath:      "/data/english-wordnet-2025-json",
+		SourceDumpID:    "2025",
+		PipelineVersion: "v1.0.0",
+		Status:          commonmodel.ImportRunStatusCompleted,
+		StartedAt:       now,
+		FinishedAt:      &now,
+	}
+	createRows(t, db, &importRun, &oewnRun)
+
+	entries := []Word{
+		{ID: 1001, Headword: "head", NormalizedHeadword: norm.NormalizeHeadword("head"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1002, Headword: "head", NormalizedHeadword: norm.NormalizeHeadword("head"), Pos: commonmodel.POSVerb, SourceRunID: importRun.ID},
+		{ID: 1003, Headword: "head", NormalizedHeadword: norm.NormalizeHeadword("head"), Pos: commonmodel.POSAdjective, SourceRunID: importRun.ID},
+		{ID: 1010, Headword: "Chief", NormalizedHeadword: norm.NormalizeHeadword("chief"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1011, Headword: "leader", NormalizedHeadword: norm.NormalizeHeadword("leader"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1012, Headword: "top", NormalizedHeadword: norm.NormalizeHeadword("top"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1013, Headword: "tail", NormalizedHeadword: norm.NormalizeHeadword("tail"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1014, Headword: "heading", NormalizedHeadword: norm.NormalizeHeadword("heading"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1015, Headword: "ceremony", NormalizedHeadword: norm.NormalizeHeadword("ceremony"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1016, Headword: "chairperson", NormalizedHeadword: norm.NormalizeHeadword("chairperson"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1017, Headword: "captain", NormalizedHeadword: norm.NormalizeHeadword("captain"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+		{ID: 1018, Headword: "director", NormalizedHeadword: norm.NormalizeHeadword("director"), Pos: commonmodel.POSNoun, SourceRunID: importRun.ID},
+	}
+	for i := range entries {
+		createRows(t, db, &entries[i])
+	}
+
+	signals := []commonmodel.EntryLearningSignal{
+		{EntryID: 1001, FrequencyRank: 10, CEFRLevel: 2, UpdatedAt: now},
+		{EntryID: 1002, FrequencyRank: 20, CEFRLevel: 1, UpdatedAt: now},
+		{EntryID: 1003, FrequencyRank: 30, UpdatedAt: now},
+		{EntryID: 1010, FrequencyRank: 5, OxfordLevel: 1, UpdatedAt: now},
+		{EntryID: 1011, FrequencyRank: 50, CETLevel: 1, UpdatedAt: now},
+		{EntryID: 1012, FrequencyRank: 100, CEFRLevel: 4, CollinsStars: 4, UpdatedAt: now},
+		{EntryID: 1013, FrequencyRank: 30, UpdatedAt: now},
+		{EntryID: 1014, FrequencyRank: 200, UpdatedAt: now},
+		{EntryID: 1015, FrequencyRank: 300, UpdatedAt: now},
+		{EntryID: 1016, FrequencyRank: 400, UpdatedAt: now},
+		{EntryID: 1017, SchoolLevel: commonmodel.SchoolLevelMiddleSchool, UpdatedAt: now},
+		{EntryID: 1018, SchoolLevel: commonmodel.SchoolLevelUniversity, UpdatedAt: now},
+	}
+	for i := range signals {
+		createRows(t, db, &signals[i])
+	}
+
+	createRows(t, db, &WordVariant{
+		ID:              1020,
+		WordID:          1002,
+		FormText:        "heads",
+		NormalizedForm:  norm.NormalizeHeadword("heads"),
+		RelationKind:    commonmodel.RelationKindForm,
+		FormType:        stringPtr("third_person_singular"),
+		SourceRelations: pq.StringArray{"form_of"},
+		DisplayOrder:    1,
+	})
+
+	edges := []commonmodel.HeadwordRelationEdge{
+		relationEdge(1100, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "chief", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-1", "oewn-chief-n-1"),
+		relationEdge(1101, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "leader", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-2", "oewn-leader-n-1"),
+		relationEdge(1102, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "top", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-3", "oewn-top-n-1"),
+		relationEdge(1103, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "top", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-4", "oewn-top-n-2"),
+		relationEdge(1104, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "caput", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-5", "oewn-caput-n-1"),
+		relationEdge(1105, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeAntonym, "tail", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationAntonym, "oewn-head-n-6", "oewn-tail-n-1"),
+		relationEdge(1106, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeDerivation, "heading", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationDerivation, "oewn-head-n-7", "oewn-heading-n-1"),
+		relationEdge(1107, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeEvent, "ceremony", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationEvent, "oewn-head-n-8", "oewn-ceremony-n-1"),
+		relationEdge(1108, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeAgent, "chairperson", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationAgent, "oewn-head-n-9", "oewn-chairperson-n-1"),
+		relationEdge(1109, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "captain", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-10", "oewn-captain-n-1"),
+		relationEdge(1110, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "director", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-11", "oewn-director-n-1"),
+		relationEdge(1111, oewnRun.ID, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.RelationTypeSynonym, "head", commonmodel.HeadwordRelationPOSCodeNoun, commonmodel.OEWNSourceRelationMembers, "oewn-head-n-12", "oewn-head-n-13"),
+	}
+	for i := range edges {
+		createRows(t, db, &edges[i])
+	}
+}
+
+func relationEdge(id, importRunID int64, sourceHeadword string, sourcePOSCode int, relationType, targetHeadword string, targetPOSCode int, sourceRelationType, sourceSynsetID, targetSynsetID string) commonmodel.HeadwordRelationEdge {
+	return commonmodel.HeadwordRelationEdge{
+		ID:                       id,
+		SourceHeadword:           sourceHeadword,
+		SourceHeadwordNormalized: norm.NormalizeHeadword(sourceHeadword),
+		SourcePOSCode:            sourcePOSCode,
+		RelationType:             relationType,
+		TargetHeadword:           targetHeadword,
+		TargetHeadwordNormalized: norm.NormalizeHeadword(targetHeadword),
+		TargetPOSCode:            targetPOSCode,
+		SourceRelationType:       sourceRelationType,
+		SourceSynsetID:           sourceSynsetID,
+		TargetSynsetID:           targetSynsetID,
+		ImportRunID:              importRunID,
+	}
+}
+
 func createRows(t *testing.T, db *gorm.DB, rows ...any) {
 	t.Helper()
 
@@ -744,6 +1091,53 @@ func createRows(t *testing.T, db *gorm.DB, rows ...any) {
 			t.Fatalf("create %T: %v", row, err)
 		}
 	}
+}
+
+func relationItemTargets(items []HeadwordRelationItem) []string {
+	targets := make([]string, len(items))
+	for i, item := range items {
+		targets[i] = item.TargetHeadwordNormalized
+	}
+	return targets
+}
+
+func assertRelationTypeAbsent(t *testing.T, groups []HeadwordRelationGroup, relationType string) {
+	t.Helper()
+
+	for _, group := range groups {
+		if group.RelationType == relationType {
+			t.Fatalf("relation type %q unexpectedly present in %#v", relationType, groups)
+		}
+	}
+}
+
+func assertRelationTargetAbsent(t *testing.T, groups []HeadwordRelationGroup, target string) {
+	t.Helper()
+
+	if item := findRelationTarget(groups, target); item != nil {
+		t.Fatalf("relation target %q unexpectedly present: %#v", target, item)
+	}
+}
+
+func findRelationTarget(groups []HeadwordRelationGroup, target string) *HeadwordRelationItem {
+	normalizedTarget := norm.NormalizeHeadword(target)
+	for _, group := range groups {
+		for _, item := range group.Items {
+			if item.TargetHeadwordNormalized == normalizedTarget {
+				found := item
+				return &found
+			}
+		}
+	}
+	return nil
+}
+
+func entryGroupPOS(words []Word) []string {
+	pos := make([]string, len(words))
+	for i, word := range words {
+		pos[i] = word.Pos
+	}
+	return pos
 }
 
 func suggestionHeadwords(words []Word) []string {

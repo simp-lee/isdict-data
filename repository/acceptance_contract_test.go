@@ -20,6 +20,10 @@ func (repositoryContractStub) GetWordByHeadword(context.Context, string, bool, b
 	return nil, nil, nil
 }
 
+func (repositoryContractStub) GetEntryGroupByHeadword(context.Context, string, bool, bool, bool) ([]Word, *WordVariant, error) {
+	return nil, nil, nil
+}
+
 func (repositoryContractStub) GetWordsByHeadwords(context.Context, []string, bool, bool, bool) ([]Word, error) {
 	return nil, nil
 }
@@ -28,19 +32,23 @@ func (repositoryContractStub) GetWordsByVariants(context.Context, []string, bool
 	return nil, nil
 }
 
+func (repositoryContractStub) GetHeadwordRelationGroups(context.Context, string, int, RelationQueryOptions) ([]HeadwordRelationGroup, error) {
+	return nil, nil
+}
+
 func (repositoryContractStub) GetWordsByVariant(context.Context, string, *string, bool, bool) ([]Word, []WordVariant, error) {
 	return nil, nil, nil
 }
 
-func (repositoryContractStub) ListFeaturedCandidateHeadwords(context.Context) ([]string, error) {
+func (repositoryContractStub) ListFeaturedCandidates(context.Context) ([]FeaturedCandidate, error) {
 	return nil, nil
 }
 
-func (repositoryContractStub) SearchWords(context.Context, string, *string, *int, *int, *int, *int, *int, int, int) ([]Word, int64, error) {
+func (repositoryContractStub) SearchWords(context.Context, string, SearchOptions) ([]Word, int64, error) {
 	return nil, 0, nil
 }
 
-func (repositoryContractStub) SuggestWords(context.Context, string, *int, *int, *int, *int, *int, int) ([]Word, error) {
+func (repositoryContractStub) SuggestWords(context.Context, string, SuggestOptions) ([]Word, error) {
 	return nil, nil
 }
 
@@ -58,17 +66,19 @@ func (repositoryContractStub) GetSensesByWordID(context.Context, int64, *string)
 
 var _ WordRepository = (*repositoryContractStub)(nil)
 
-// AC-1: 导出 WordRepository 接口，保持 10 个方法签名与当前契约一致
+// AC-1: 导出 WordRepository 接口，保持公开查询方法签名与当前契约一致
 func TestRepository_WordRepositoryContractCompile(t *testing.T) {
 	t.Helper()
 
 	repoType := reflect.TypeFor[WordRepository]()
 	expectedMethodNames := []string{
 		"GetWordByHeadword",
+		"GetEntryGroupByHeadword",
 		"GetWordsByHeadwords",
 		"GetWordsByVariants",
+		"GetHeadwordRelationGroups",
 		"GetWordsByVariant",
-		"ListFeaturedCandidateHeadwords",
+		"ListFeaturedCandidates",
 		"SearchWords",
 		"SuggestWords",
 		"SearchPhrases",
@@ -178,6 +188,47 @@ func TestProductionPackages_RestrictRuntimeDependencies(t *testing.T) {
 	sort.Strings(violations)
 	if len(violations) > 0 {
 		t.Fatalf("unexpected production imports:\n%s", strings.Join(violations, "\n"))
+	}
+}
+
+func TestProductionPackages_DoNotReferenceLegacyLexicalRelations(t *testing.T) {
+	rootDir := repoRootDir(t)
+	var violations []string
+
+	err := filepath.WalkDir(rootDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if entry.Name() == ".agents-work" || entry.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(content), "LexicalRelation") || strings.Contains(string(content), "lexical_relations") {
+			relPath, err := filepath.Rel(rootDir, path)
+			if err != nil {
+				return err
+			}
+			violations = append(violations, filepath.ToSlash(relPath))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk production packages: %v", err)
+	}
+
+	sort.Strings(violations)
+	if len(violations) > 0 {
+		t.Fatalf("legacy lexical relation references found:\n%s", strings.Join(violations, "\n"))
 	}
 }
 

@@ -6,5 +6,6 @@ import "errors"
 var (
 	ErrWordNotFound            = errors.New("word not found")
 	ErrVariantNotFound         = errors.New("variant not found")
+	ErrInvalidSearchFilter     = errors.New("invalid search filter")
 	errRepositoryUninitialized = errors.New("repository is not initialized")
 )

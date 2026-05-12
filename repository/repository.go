@@ -35,7 +35,8 @@ type Word struct {
 	PronunciationAudios []PronunciationAudio          `gorm:"foreignKey:WordID;references:ID"`
 	Senses              []Sense                       `gorm:"foreignKey:WordID;references:ID"`
 	WordVariants        []WordVariant                 `gorm:"foreignKey:WordID;references:ID"`
-	LexicalRelations    []model.LexicalRelation       `gorm:"foreignKey:EntryID;references:ID"`
+	EntryDefinitions    []model.EntryDefinition       `gorm:"foreignKey:EntryID;references:ID"`
+	EntryExamples       []model.EntryExample          `gorm:"foreignKey:EntryID;references:ID"`
 }
 
 func (Word) TableName() string {
@@ -83,7 +84,6 @@ type Sense struct {
 	GlossesZH         []model.SenseGlossZH          `gorm:"foreignKey:SenseID;references:ID"`
 	Labels            []model.SenseLabel            `gorm:"foreignKey:SenseID;references:ID"`
 	Examples          []Example                     `gorm:"foreignKey:SenseID;references:ID"`
-	LexicalRelations  []model.LexicalRelation       `gorm:"foreignKey:SenseID;references:ID"`
 }
 
 func (Sense) TableName() string {
@@ -129,8 +129,33 @@ type searchFilters struct {
 	cefrLevel        *int
 	oxfordLevel      *int
 	cetLevel         *int
+	schoolLevel      *int
 	maxFrequencyRank *int
 	minCollinsStars  *int
+}
+
+// SearchOptions names the optional filters and paging controls for word search.
+type SearchOptions struct {
+	POS              *string
+	CEFRLevel        *int
+	OxfordLevel      *int
+	CETLevel         *int
+	SchoolLevel      *int
+	MaxFrequencyRank *int
+	MinCollinsStars  *int
+	Limit            int
+	Offset           int
+}
+
+// SuggestOptions names the optional filters and limit control for suggestions.
+type SuggestOptions struct {
+	CEFRLevel        *int
+	OxfordLevel      *int
+	CETLevel         *int
+	SchoolLevel      *int
+	MaxFrequencyRank *int
+	MinCollinsStars  *int
+	Limit            int
 }
 
 type searchResultID struct {
@@ -148,6 +173,15 @@ type preloadOptions struct {
 	pronunciations bool
 	senses         bool
 	entryDetails   bool
+}
+
+type learnerSignalColumns struct {
+	frequencyRank string
+	schoolLevel   string
+	cefrLevel     string
+	oxfordLevel   string
+	cetLevel      string
+	collinsStars  string
 }
 
 func newPreloadOptions(includeVariants, includePronunciations, includeSenses bool) preloadOptions {
@@ -184,7 +218,13 @@ func (r *Repository) applyPreloads(query *gorm.DB, opts preloadOptions) *gorm.DB
 			Preload("CEFRSourceSignals", func(db *gorm.DB) *gorm.DB {
 				return db.Order("cefr_source ASC")
 			}).
-			Preload("Etymology")
+			Preload("Etymology").
+			Preload("EntryDefinitions", func(db *gorm.DB) *gorm.DB {
+				return db.Order("definition_order ASC, source ASC, id ASC")
+			}).
+			Preload("EntryExamples", func(db *gorm.DB) *gorm.DB {
+				return db.Order("example_order ASC, source ASC, id ASC")
+			})
 	}
 
 	if opts.pronunciations {
@@ -214,12 +254,6 @@ func (r *Repository) applyPreloads(query *gorm.DB, opts preloadOptions) *gorm.DB
 			Preload("Senses.Examples", func(db *gorm.DB) *gorm.DB {
 				return db.Order("example_order ASC, id ASC")
 			}).
-			Preload("Senses.LexicalRelations", func(db *gorm.DB) *gorm.DB {
-				return db.Order("relation_type ASC, display_order ASC, target_text ASC, id ASC")
-			}).
-			Preload("LexicalRelations", func(db *gorm.DB) *gorm.DB {
-				return db.Where("sense_id IS NULL").Order("relation_type ASC, display_order ASC, target_text ASC, id ASC")
-			}).
 			Preload("Senses", func(db *gorm.DB) *gorm.DB {
 				return db.Order("sense_order ASC, id ASC")
 			})
@@ -232,11 +266,77 @@ func (r *Repository) applyPreloads(query *gorm.DB, opts preloadOptions) *gorm.DB
 	return query
 }
 
+func aliasedLearnerSignalColumns(alias string) learnerSignalColumns {
+	return learnerSignalColumns{
+		frequencyRank: alias + ".frequency_rank",
+		schoolLevel:   alias + ".school_level",
+		cefrLevel:     alias + ".cefr_level",
+		oxfordLevel:   alias + ".oxford_level",
+		cetLevel:      alias + ".cet_level",
+		collinsStars:  alias + ".collins_stars",
+	}
+}
+
+func learnerSignalOrder(alias string) string {
+	return learnerSignalOrderForColumns(aliasedLearnerSignalColumns(alias))
+}
+
+func learnerSignalOrderForColumns(columns learnerSignalColumns) string {
+	return fmt.Sprintf(
+		`CASE WHEN COALESCE(%[1]s, 0) = 0 THEN 999999999 ELSE %[1]s END ASC,
+		CASE WHEN COALESCE(%[2]s, 0) = 0 THEN 999999999 ELSE %[2]s END ASC,
+		CASE WHEN COALESCE(%[3]s, 0) > 0 THEN 0 ELSE 1 END ASC,
+		CASE WHEN COALESCE(%[4]s, 0) > 0 THEN 0 ELSE 1 END ASC,
+		CASE WHEN COALESCE(%[5]s, 0) > 0 THEN 0 ELSE 1 END ASC,
+		CASE WHEN COALESCE(%[6]s, 0) > 0 THEN 0 ELSE 1 END ASC,
+		COALESCE(%[3]s, 0) DESC,
+		COALESCE(%[4]s, 0) DESC,
+		COALESCE(%[5]s, 0) DESC,
+		COALESCE(%[6]s, 0) DESC`,
+		columns.frequencyRank,
+		columns.schoolLevel,
+		columns.cefrLevel,
+		columns.oxfordLevel,
+		columns.cetLevel,
+		columns.collinsStars,
+	)
+}
+
+func rankedLearnerSignalColumns() learnerSignalColumns {
+	return learnerSignalColumns{
+		frequencyRank: "freq_rank",
+		schoolLevel:   "school_rank",
+		cefrLevel:     "cefr_level",
+		oxfordLevel:   "oxford_level",
+		cetLevel:      "cet_level",
+		collinsStars:  "collins_stars",
+	}
+}
+
 func entryQualityOrder(entryAlias, learningAlias string) string {
 	return fmt.Sprintf(
-		"CASE WHEN COALESCE(%[2]s.frequency_rank, 0) = 0 THEN 999999 ELSE %[2]s.frequency_rank END ASC, COALESCE(%[2]s.cefr_level, 0) DESC, %[1]s.id ASC",
+		`%s,
+		%s.etymology_index ASC,
+		%s.id ASC`,
+		learnerSignalOrder(learningAlias),
 		entryAlias,
-		learningAlias,
+		entryAlias,
+	)
+}
+
+func entryGroupOrder(entryAlias, learningAlias string) string {
+	return fmt.Sprintf(
+		`CASE WHEN %[1]s.headword = LOWER(%[1]s.headword) THEN 0 ELSE 1 END ASC,
+		CASE %[1]s.pos
+			WHEN 'noun' THEN 1
+			WHEN 'verb' THEN 2
+			WHEN 'adjective' THEN 3
+			WHEN 'adverb' THEN 4
+			ELSE 9
+		END ASC,
+		%s`,
+		entryAlias,
+		entryQualityOrder(entryAlias, learningAlias),
 	)
 }
 
@@ -279,8 +379,7 @@ func (r *Repository) GetWordByHeadword(ctx context.Context, headword string, inc
 	var variant WordVariant
 	variantRanking := `CASE WHEN entry_forms.form_text = ? THEN 0 ELSE 1 END ASC,
 	       entry_forms.relation_kind ASC,
-	       CASE WHEN COALESCE(els.frequency_rank, 0) = 0 THEN 999999 ELSE els.frequency_rank END ASC,
-	       COALESCE(els.cefr_level, 0) DESC,
+	       ` + learnerSignalOrder("els") + `,
 	       entry_forms.entry_id ASC`
 	err = db.
 		Select("entry_forms.*").
@@ -305,6 +404,48 @@ func (r *Repository) GetWordByHeadword(ctx context.Context, headword string, inc
 	}
 
 	return &loaded[0], &variant, nil
+}
+
+// GetEntryGroupByHeadword resolves all entries under the same normalized
+// headword. If the input is an entry form or alias, the group for its canonical
+// entry headword is returned and the selected form is exposed as queriedVariant.
+func (r *Repository) GetEntryGroupByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) ([]Word, *WordVariant, error) {
+	normalizedHeadword := norm.NormalizeHeadword(headword)
+	db, err := r.dbWithContext(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	words, err := r.loadWordsByNormalizedHeadword(db, normalizedHeadword, includeVariants, includePronunciations, includeSenses)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(words) > 0 {
+		return words, nil, nil
+	}
+
+	variant, err := r.findBestVariant(db, normalizedHeadword, headword)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	selected, err := r.loadWordsByIDs(db, []int64{variant.WordID}, false, false, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(selected) == 0 || selected[0].NormalizedHeadword == "" {
+		return nil, nil, ErrWordNotFound
+	}
+
+	words, err = r.loadWordsByNormalizedHeadword(db, selected[0].NormalizedHeadword, includeVariants, includePronunciations, includeSenses)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(words) == 0 {
+		return nil, nil, ErrWordNotFound
+	}
+
+	return words, &variant, nil
 }
 
 // GetWordsByVariant finds entries by form/alias text using normalized matching.
@@ -370,8 +511,7 @@ func (r *Repository) GetWordsByVariants(ctx context.Context, variants []string, 
 		Where("entry_forms.normalized_form IN ?", normalizedForms).
 		Order(`entry_forms.normalized_form ASC,
 		       entry_forms.relation_kind ASC,
-		       CASE WHEN COALESCE(els.frequency_rank, 0) = 0 THEN 999999 ELSE els.frequency_rank END ASC,
-		       COALESCE(els.cefr_level, 0) DESC,
+		       ` + learnerSignalOrder("els") + `,
 		       entry_forms.entry_id ASC`).
 		Find(&rankedVariants).Error
 	if err != nil {
@@ -400,19 +540,60 @@ func (r *Repository) GetWordsByHeadwords(ctx context.Context, headwords []string
 		return []Word{}, nil
 	}
 
-	normalizedForms := make([]string, len(headwords))
-	for i, hw := range headwords {
-		normalizedForms[i] = norm.NormalizeHeadword(hw)
+	_, uniqueNormalizedForms := normalizeUniqueInputs(headwords)
+	if len(uniqueNormalizedForms) == 0 {
+		return []Word{}, nil
 	}
 
 	var words []Word
-	query := db.Where("normalized_headword IN ?", normalizedForms)
+	query := db.Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entries.normalized_headword IN ?", uniqueNormalizedForms).
+		Order("entries.normalized_headword ASC").
+		Order(entryQualityOrder("entries", "els"))
 	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
 	if err := query.Find(&words).Error; err != nil {
 		return nil, err
 	}
 
 	return words, nil
+}
+
+func (r *Repository) loadWordsByNormalizedHeadword(db *gorm.DB, normalizedHeadword string, includeVariants, includePronunciations, includeSenses bool) ([]Word, error) {
+	if strings.TrimSpace(normalizedHeadword) == "" {
+		return []Word{}, nil
+	}
+
+	var words []Word
+	query := db.Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entries.normalized_headword = ?", normalizedHeadword).
+		Order(entryGroupOrder("entries", "els"))
+	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
+	if err := query.Find(&words).Error; err != nil {
+		return nil, err
+	}
+	return words, nil
+}
+
+func (r *Repository) findBestVariant(db *gorm.DB, normalizedForm, originalForm string) (WordVariant, error) {
+	var variant WordVariant
+	variantRanking := `CASE WHEN entry_forms.form_text = ? THEN 0 ELSE 1 END ASC,
+	       entry_forms.relation_kind ASC,
+	       ` + learnerSignalOrder("els") + `,
+	       entry_forms.entry_id ASC`
+	err := db.
+		Select("entry_forms.*").
+		Joins("INNER JOIN entries ON entry_forms.entry_id = entries.id").
+		Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entry_forms.normalized_form = ?", normalizedForm).
+		Order(gorm.Expr(variantRanking, originalForm)).
+		First(&variant).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return WordVariant{}, ErrWordNotFound
+		}
+		return WordVariant{}, err
+	}
+	return variant, nil
 }
 
 func (r *Repository) loadWordsByIDs(db *gorm.DB, wordIDs []int64, includeVariants, includePronunciations, includeSenses bool) ([]Word, error) {
@@ -442,21 +623,25 @@ func (r *Repository) loadWordsByIDs(db *gorm.DB, wordIDs []int64, includeVariant
 	return ordered, nil
 }
 
-// ListFeaturedCandidateHeadwords returns headwords with learning signals for featured recommendations.
-func (r *Repository) ListFeaturedCandidateHeadwords(ctx context.Context) ([]string, error) {
+// ListFeaturedCandidates returns upstream canonical featured_candidates in
+// quality-rank order. Candidate eligibility, per-headword selection, and
+// ranking are owned by the commons read model.
+func (r *Repository) ListFeaturedCandidates(ctx context.Context) ([]FeaturedCandidate, error) {
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	headwords := make([]string, 0, 70000)
+	candidates := make([]FeaturedCandidate, 0, 70000)
 	if err := db.
 		Table("featured_candidates").
-		Pluck("headword", &headwords).Error; err != nil {
+		Select("entry_id, headword").
+		Order("quality_rank ASC, entry_id ASC").
+		Scan(&candidates).Error; err != nil {
 		return nil, err
 	}
 
-	return headwords, nil
+	return candidates, nil
 }
 
 // escapeLikePattern escapes SQL LIKE wildcard characters to prevent user input
@@ -468,15 +653,86 @@ func escapeLikePattern(s string) string {
 	return s
 }
 
-func newSearchFilters(pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int) searchFilters {
+func newSearchFilters(opts SearchOptions) searchFilters {
 	return searchFilters{
-		pos:              pos,
-		cefrLevel:        cefrLevel,
-		oxfordLevel:      oxfordLevel,
-		cetLevel:         cetLevel,
-		maxFrequencyRank: maxFrequencyRank,
-		minCollinsStars:  minCollinsStars,
+		pos:              opts.POS,
+		cefrLevel:        opts.CEFRLevel,
+		oxfordLevel:      opts.OxfordLevel,
+		cetLevel:         opts.CETLevel,
+		schoolLevel:      opts.SchoolLevel,
+		maxFrequencyRank: opts.MaxFrequencyRank,
+		minCollinsStars:  opts.MinCollinsStars,
 	}
+}
+
+func searchOptionsFromSuggestOptions(opts SuggestOptions) SearchOptions {
+	return SearchOptions{
+		CEFRLevel:        opts.CEFRLevel,
+		OxfordLevel:      opts.OxfordLevel,
+		CETLevel:         opts.CETLevel,
+		SchoolLevel:      opts.SchoolLevel,
+		MaxFrequencyRank: opts.MaxFrequencyRank,
+		MinCollinsStars:  opts.MinCollinsStars,
+		Limit:            opts.Limit,
+	}
+}
+
+func normalizeSearchOptions(opts SearchOptions) SearchOptions {
+	if opts.Limit <= 0 {
+		opts.Limit = 20
+	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+	return opts
+}
+
+func normalizeSuggestOptions(opts SuggestOptions) SuggestOptions {
+	if opts.Limit <= 0 {
+		opts.Limit = 10
+	}
+	return opts
+}
+
+func ValidateSearchOptions(opts SearchOptions) error {
+	if opts.POS != nil {
+		if _, ok := model.ValidPOSCodes()[*opts.POS]; !ok {
+			return fmt.Errorf("%w: pos must be a known POS code", ErrInvalidSearchFilter)
+		}
+	}
+	if err := validateInt16CodeFilter("cefr_level", opts.CEFRLevel, model.CEFRLevelUnknown, model.CEFRLevelC2); err != nil {
+		return err
+	}
+	if err := validateInt16CodeFilter("oxford_level", opts.OxfordLevel, model.OxfordLevelUnknown, model.OxfordLevel5000); err != nil {
+		return err
+	}
+	if err := validateInt16CodeFilter("cet_level", opts.CETLevel, model.CETLevelUnknown, model.CETLevel6); err != nil {
+		return err
+	}
+	if err := validateInt16CodeFilter("school_level", opts.SchoolLevel, model.SchoolLevelUnknown, model.SchoolLevelUniversity); err != nil {
+		return err
+	}
+	if opts.MaxFrequencyRank != nil && *opts.MaxFrequencyRank <= 0 {
+		return fmt.Errorf("%w: max_frequency_rank must be greater than 0", ErrInvalidSearchFilter)
+	}
+	if err := validateInt16CodeFilter("min_collins_stars", opts.MinCollinsStars, model.CollinsStarsUnknown, model.CollinsFiveStars); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ValidateSuggestOptions(opts SuggestOptions) error {
+	return ValidateSearchOptions(searchOptionsFromSuggestOptions(opts))
+}
+
+func validateInt16CodeFilter(name string, value *int, minValue, maxValue int16) error {
+	if value == nil {
+		return nil
+	}
+	if *value < int(minValue) || *value > int(maxValue) {
+		return fmt.Errorf("%w: %s must be between %d and %d", ErrInvalidSearchFilter, name, minValue, maxValue)
+	}
+	return nil
 }
 
 func (filters searchFilters) searchTermFuzzyClauses(alias string) []string {
@@ -494,10 +750,6 @@ func (filters searchFilters) searchTermPrefixRangeClauses(alias, prefix, lower, 
 	return filters.searchTermFuzzyClauses(alias), filters.args(pattern)
 }
 
-func (filters searchFilters) matchesNothing() bool {
-	return filters.maxFrequencyRank != nil && *filters.maxFrequencyRank <= 0
-}
-
 func positiveFilter(value *int) bool {
 	return value != nil && *value > 0
 }
@@ -511,6 +763,9 @@ func (filters searchFilters) appendSearchTermFilterClauses(clauses []string, ali
 	}
 	if filters.cetLevel != nil {
 		clauses = append(clauses, fmt.Sprintf("%s.cet_level = ?", alias))
+	}
+	if filters.schoolLevel != nil {
+		clauses = append(clauses, fmt.Sprintf("%s.school_level = ?", alias))
 	}
 	if positiveFilter(filters.maxFrequencyRank) {
 		clauses = append(clauses, fmt.Sprintf("%s.frequency_rank > 0 AND %s.frequency_rank <= ?", alias, alias))
@@ -543,6 +798,9 @@ func (filters searchFilters) appendFilterArgs(args []interface{}) []interface{} 
 	}
 	if filters.cetLevel != nil {
 		args = append(args, *filters.cetLevel)
+	}
+	if filters.schoolLevel != nil {
+		args = append(args, *filters.schoolLevel)
 	}
 	if positiveFilter(filters.maxFrequencyRank) {
 		args = append(args, *filters.maxFrequencyRank)
@@ -659,7 +917,7 @@ func buildBatchVariantMatches(inputs []string, normalizedInputs []string, varian
 }
 
 // SearchWords performs fuzzy search through the entry_search_terms read model.
-func (r *Repository) SearchWords(ctx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]Word, int64, error) {
+func (r *Repository) SearchWords(ctx context.Context, keyword string, opts SearchOptions) ([]Word, int64, error) {
 	normalizedKeyword := norm.NormalizeHeadword(keyword)
 	escaped := escapeLikePattern(normalizedKeyword)
 	prefix := escaped + "%"
@@ -668,10 +926,11 @@ func (r *Repository) SearchWords(ctx context.Context, keyword string, pos *strin
 	if err != nil {
 		return nil, 0, err
 	}
-	filters := newSearchFilters(pos, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars)
-	if filters.matchesNothing() {
-		return []Word{}, 0, nil
+	opts = normalizeSearchOptions(opts)
+	if err := ValidateSearchOptions(opts); err != nil {
+		return nil, 0, err
 	}
+	filters := newSearchFilters(opts)
 	fuzzyFilters := filters.searchTermFuzzyClauses("t")
 
 	countSQL := fmt.Sprintf(`
@@ -692,15 +951,9 @@ func (r *Repository) SearchWords(ctx context.Context, keyword string, pos *strin
 		return []Word{}, 0, nil
 	}
 
-	results, err := querySearchResultIDs(db, prefix, fuzzyFilters, fuzzyArgs, limit, offset, true)
+	results, err := querySearchResultIDs(db, prefix, fuzzyFilters, fuzzyArgs, opts.Limit, opts.Offset)
 	if err != nil {
 		return nil, 0, err
-	}
-	if len(results) < limit {
-		results, err = querySearchResultIDs(db, prefix, fuzzyFilters, fuzzyArgs, limit, offset, false)
-		if err != nil {
-			return nil, 0, err
-		}
 	}
 	if len(results) == 0 {
 		return []Word{}, total, nil
@@ -719,36 +972,44 @@ func (r *Repository) SearchWords(ctx context.Context, keyword string, pos *strin
 	return words, total, nil
 }
 
-func querySearchResultIDs(db *gorm.DB, prefix string, fuzzyFilters []string, fuzzyArgs []interface{}, limit, offset int, positiveFrequencyOnly bool) ([]searchResultID, error) {
+func querySearchResultIDs(db *gorm.DB, prefix string, fuzzyFilters []string, fuzzyArgs []interface{}, limit, offset int) ([]searchResultID, error) {
 	clauses := append([]string(nil), fuzzyFilters...)
-	if positiveFrequencyOnly {
-		clauses = append(clauses, "t.frequency_rank > 0")
-	}
 
 	pageSQL := fmt.Sprintf(`
 		WITH ranked AS (
 			SELECT
 				t.entry_id AS id,
 				CASE WHEN t.normalized_term LIKE ? THEN t.term_rank ELSE t.term_rank + 2 END AS priority,
-				CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS freq_rank,
+				CASE WHEN t.frequency_rank = 0 THEN 999999999 ELSE t.frequency_rank END AS freq_rank,
+				CASE WHEN t.school_level = 0 THEN 999999999 ELSE t.school_level END AS school_rank,
+				t.cefr_level,
+				t.oxford_level,
+				t.cet_level,
+				t.collins_stars,
 				t.headword,
 				ROW_NUMBER() OVER (
 					PARTITION BY t.entry_id
 					ORDER BY
-						CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END ASC,
+						%s,
 						CASE WHEN t.normalized_term LIKE ? THEN t.term_rank ELSE t.term_rank + 2 END ASC,
 						t.headword ASC
 				) AS rn
 			FROM entry_search_terms t
 			WHERE %s
 		)
-		SELECT id, priority, freq_rank
+		SELECT id, priority, freq_rank, school_rank, cefr_level, oxford_level, cet_level, collins_stars
 		FROM ranked
 		WHERE rn = 1
-		ORDER BY freq_rank ASC, priority ASC, headword ASC
+		ORDER BY
+			%s,
+			priority ASC,
+			headword ASC,
+			id ASC
 			LIMIT ? OFFSET ?
 		`,
+		learnerSignalOrder("t"),
 		strings.Join(clauses, " AND "),
+		learnerSignalOrderForColumns(rankedLearnerSignalColumns()),
 	)
 
 	pageArgs := append(appendArgSets([]interface{}{prefix, prefix}, fuzzyArgs), limit, offset)
@@ -760,35 +1021,35 @@ func querySearchResultIDs(db *gorm.DB, prefix string, fuzzyFilters []string, fuz
 }
 
 // SuggestWords provides autocomplete suggestions through the entry_search_terms read model.
-func (r *Repository) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]Word, error) {
+func (r *Repository) SuggestWords(ctx context.Context, prefix string, opts SuggestOptions) ([]Word, error) {
 	normalizedPrefix := norm.NormalizeHeadword(prefix)
 	db, err := r.dbWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	filters := newSearchFilters(nil, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars)
-	if filters.matchesNothing() {
-		return []Word{}, nil
-	}
-
-	results, err := querySuggestionIDs(db, normalizedPrefix, filters, limit, true)
-	if err != nil {
+	opts = normalizeSuggestOptions(opts)
+	if err := ValidateSuggestOptions(opts); err != nil {
 		return nil, err
 	}
-	if len(results) < limit {
-		results, err = querySuggestionIDs(db, normalizedPrefix, filters, limit, false)
-	}
+	filters := newSearchFilters(searchOptionsFromSuggestOptions(opts))
+
+	results, err := querySuggestionIDs(db, normalizedPrefix, filters, opts.Limit)
 	if err != nil {
 		return nil, err
 	}
 	return r.loadSuggestionResults(db, results)
 }
 
-func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilters, limit int, positiveFrequencyOnly bool) ([]suggestionResultID, error) {
+func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilters, limit int) ([]suggestionResultID, error) {
 	prefixLower, prefixUpper := normalizedPrefixRange(normalizedPrefix)
 	clauses, args := filters.searchTermPrefixRangeClauses("t", normalizedPrefix, prefixLower, prefixUpper)
-	if positiveFrequencyOnly {
-		clauses = append(clauses, "t.frequency_rank > 0")
+	rankedColumns := learnerSignalColumns{
+		frequencyRank: "frequency_rank",
+		schoolLevel:   "school_rank",
+		cefrLevel:     "cefr_level",
+		oxfordLevel:   "oxford_level",
+		cetLevel:      "cet_level",
+		collinsStars:  "collins_stars",
 	}
 
 	unionSQL := fmt.Sprintf(`
@@ -808,7 +1069,12 @@ func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilt
 					WHEN t.term_kind = 'form' THEN 4
 					ELSE 5
 				END AS match_priority,
-				CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS frequency_rank,
+				CASE WHEN t.frequency_rank = 0 THEN 999999999 ELSE t.frequency_rank END AS frequency_rank,
+				CASE WHEN t.school_level = 0 THEN 999999999 ELSE t.school_level END AS school_rank,
+				t.cefr_level,
+				t.oxford_level,
+				t.cet_level,
+				t.collins_stars,
 				t.term_rank,
 				ROW_NUMBER() OVER (
 					PARTITION BY t.entry_id
@@ -821,7 +1087,7 @@ func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilt
 							WHEN t.term_kind = 'form' THEN 4
 							ELSE 5
 						END ASC,
-						CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END ASC,
+						%s,
 						t.entry_id ASC,
 						t.term_rank ASC,
 						t.headword ASC
@@ -837,24 +1103,38 @@ func querySuggestionIDs(db *gorm.DB, normalizedPrefix string, filters searchFilt
 				headword_key,
 				match_priority,
 				frequency_rank,
+				school_rank,
+				cefr_level,
+				oxford_level,
+				cet_level,
+				collins_stars,
 				term_rank,
 				ROW_NUMBER() OVER (
 					PARTITION BY headword_key
 					ORDER BY
 						match_priority ASC,
-						frequency_rank ASC,
+						%s,
 						id ASC,
 						term_rank ASC
 				) AS headword_rn
 			FROM entry_ranked
 			WHERE entry_rn = 1
 		)
-		SELECT id, frequency_rank
+		SELECT id, frequency_rank, school_rank, cefr_level, oxford_level, cet_level, collins_stars
 		FROM headword_ranked
 		WHERE headword_rn = 1
-		ORDER BY match_priority ASC, frequency_rank ASC, id ASC, term_rank ASC, headword ASC
+		ORDER BY
+			match_priority ASC,
+			%s,
+			id ASC,
+			term_rank ASC,
+			headword ASC
 		LIMIT ?
-		`, strings.Join(clauses, " AND "))
+		`,
+		learnerSignalOrder("t"),
+		strings.Join(clauses, " AND "),
+		learnerSignalOrderForColumns(rankedColumns),
+		learnerSignalOrderForColumns(rankedColumns))
 
 	args = append([]interface{}{normalizedPrefix}, args...)
 	args = append(args, limit)
@@ -901,7 +1181,7 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 		patternPrefix = escaped + " %"
 	}
 
-	unionSQL := `
+	unionSQL := fmt.Sprintf(`
 	WITH ranked AS (
 		SELECT
 			t.entry_id AS id,
@@ -913,12 +1193,17 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 				WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank + 4
 				ELSE t.term_rank + 6
 			END AS priority,
-			CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END AS freq_rank,
+			CASE WHEN t.frequency_rank = 0 THEN 999999999 ELSE t.frequency_rank END AS freq_rank,
+			CASE WHEN t.school_level = 0 THEN 999999999 ELSE t.school_level END AS school_rank,
+			t.cefr_level,
+			t.oxford_level,
+			t.cet_level,
+			t.collins_stars,
 			t.headword,
 			ROW_NUMBER() OVER (
 				PARTITION BY t.entry_id
 				ORDER BY
-					CASE WHEN t.frequency_rank = 0 THEN 999999 ELSE t.frequency_rank END,
+					%s,
 					CASE
 						WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank
 						WHEN LOWER(t.term_text) LIKE ? THEN t.term_rank
@@ -939,12 +1224,19 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 				OR LOWER(t.term_text) LIKE ?
 			)
 	)
-	SELECT id, priority, freq_rank, id_ord, headword
+	SELECT id, priority, freq_rank, school_rank, cefr_level, oxford_level, cet_level, collins_stars, id_ord, headword
 	FROM ranked
 	WHERE rn = 1
-	ORDER BY freq_rank, priority, id_ord, headword
+	ORDER BY
+		%s,
+		priority,
+		id_ord,
+		headword
 	LIMIT ?
-	`
+	`,
+		learnerSignalOrder("t"),
+		learnerSignalOrderForColumns(rankedLearnerSignalColumns()),
+	)
 
 	args := []interface{}{
 		patternStart, patternPrefix, patternMiddle, patternEnd,
@@ -955,11 +1247,16 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 	}
 
 	type phraseRow struct {
-		ID       int64
-		Priority int
-		FreqRank int
-		IDOrd    int64
-		Headword string
+		ID           int64
+		Priority     int
+		FreqRank     int
+		SchoolRank   int
+		CEFRLevel    int
+		OxfordLevel  int
+		CETLevel     int
+		CollinsStars int
+		IDOrd        int64
+		Headword     string
 	}
 
 	var rankedRows []phraseRow
@@ -1031,9 +1328,6 @@ func (r *Repository) GetSensesByWordID(ctx context.Context, wordID int64, pos *s
 		}).
 		Preload("Examples", func(db *gorm.DB) *gorm.DB {
 			return db.Order("example_order ASC, id ASC")
-		}).
-		Preload("LexicalRelations", func(db *gorm.DB) *gorm.DB {
-			return db.Order("relation_type ASC, display_order ASC, target_text ASC, id ASC")
 		}).
 		Order("sense_order ASC, id ASC").
 		Find(&senses).Error; err != nil {

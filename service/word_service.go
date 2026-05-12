@@ -49,6 +49,19 @@ type batchIncludeOptions struct {
 	senses         bool
 }
 
+type RelationQueryOptions = repository.RelationQueryOptions
+type SearchOptions = repository.SearchOptions
+type SuggestOptions = repository.SuggestOptions
+
+type EntryGroupOptions struct {
+	AccentCode            *string
+	IncludeVariants       bool
+	IncludePronunciations bool
+	IncludeSenses         bool
+	IncludeRelations      *bool
+	RelationOptions       RelationQueryOptions
+}
+
 func NewWordService(repo repository.WordRepository, cfg ServiceConfig) *WordService {
 	return &WordService{
 		repo:   repo,
@@ -63,6 +76,50 @@ func (s *WordService) GetWordByHeadword(ctx context.Context, headword string, ac
 	}
 
 	return s.convertToWordResponse(word, variant, accentCode, includeVariants, includePronunciations, includeSenses), nil
+}
+
+func (s *WordService) GetEntryGroupByHeadword(ctx context.Context, headword string, opts EntryGroupOptions) (*EntryGroupResponse, error) {
+	words, variant, err := s.repo.GetEntryGroupByHeadword(ctx, headword, opts.IncludeVariants, opts.IncludePronunciations, opts.IncludeSenses)
+	if err != nil {
+		return nil, err
+	}
+	if len(words) == 0 {
+		return nil, ErrWordNotFound
+	}
+
+	entries := make([]WordResponse, 0, len(words))
+	for i := range words {
+		entries = append(entries, *s.convertToWordResponse(&words[i], nil, opts.AccentCode, opts.IncludeVariants, opts.IncludePronunciations, opts.IncludeSenses))
+	}
+
+	normalizedHeadword := words[0].NormalizedHeadword
+	if normalizedHeadword == "" {
+		normalizedHeadword = norm.NormalizeHeadword(words[0].Headword)
+	}
+	resp := &EntryGroupResponse{
+		Headword:           words[0].Headword,
+		HeadwordNormalized: normalizedHeadword,
+		Entries:            entries,
+		QueriedVariant:     queriedVariantInfo(variant),
+	}
+
+	if includeEntryGroupRelations(opts) {
+		relationGroupsByPOS, err := s.relationGroupsByPOS(ctx, normalizedHeadword, words, opts.RelationOptions)
+		if err != nil {
+			return nil, err
+		}
+		resp.RelationGroupsByPOS = relationGroupsByPOS
+	}
+
+	return resp, nil
+}
+
+func (s *WordService) GetHeadwordRelationGroups(ctx context.Context, headword string, posCode int, opts RelationQueryOptions) ([]RelationGroupResponse, error) {
+	groups, err := s.repo.GetHeadwordRelationGroups(ctx, headword, posCode, opts)
+	if err != nil {
+		return nil, err
+	}
+	return relationGroupResponses(groups), nil
 }
 
 func (s *WordService) GetWordsByVariant(ctx context.Context, variant string, kindStr *string, includePronunciations, includeSenses bool) ([]VariantReverseResponse, error) {
@@ -99,7 +156,6 @@ func (s *WordService) GetWordsByVariant(ctx context.Context, variant string, kin
 			WordAnnotations:   wordAnnotations(word),
 			CEFRSourceSignals: entryCEFRSourceSignalResponses(word.CEFRSourceSignals),
 			Etymology:         etymologyResponse(word.Etymology),
-			LexicalRelations:  lexicalRelationResponses(word.LexicalRelations),
 		}
 
 		if includePronunciations {
@@ -316,7 +372,7 @@ func (s *WordService) buildBatchResponses(inputs []string, index batchCandidateI
 	return responses, notFound
 }
 
-func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]SearchResultResponse, *MetaInfo, error) {
+func (s *WordService) SearchWords(ctx context.Context, keyword string, opts SearchOptions) ([]SearchResultResponse, *MetaInfo, error) {
 	keywordLength := queryvalidation.NormalizedRuneCount(keyword)
 	if keywordLength < queryvalidation.MinQueryLength {
 		return nil, nil, fmt.Errorf("keyword must be at least %d characters", queryvalidation.MinQueryLength)
@@ -325,17 +381,20 @@ func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *
 		return nil, nil, errors.New("keyword must not exceed 100 characters")
 	}
 
-	if limit <= 0 {
-		limit = 20
+	if opts.Limit <= 0 {
+		opts.Limit = 20
 	}
-	if limit > s.config.SearchMaxLimit {
-		limit = s.config.SearchMaxLimit
+	if opts.Limit > s.config.SearchMaxLimit {
+		opts.Limit = s.config.SearchMaxLimit
 	}
-	if offset < 0 {
-		offset = 0
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+	if err := repository.ValidateSearchOptions(opts); err != nil {
+		return nil, nil, err
 	}
 
-	words, total, err := s.repo.SearchWords(ctx, keyword, posCode, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars, limit, offset)
+	words, total, err := s.repo.SearchWords(ctx, keyword, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -352,14 +411,14 @@ func (s *WordService) SearchWords(ctx context.Context, keyword string, posCode *
 
 	meta := &MetaInfo{
 		Total:  &total,
-		Limit:  &limit,
-		Offset: &offset,
+		Limit:  &opts.Limit,
+		Offset: &opts.Offset,
 	}
 
 	return results, meta, nil
 }
 
-func (s *WordService) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]SuggestResponse, error) {
+func (s *WordService) SuggestWords(ctx context.Context, prefix string, opts SuggestOptions) ([]SuggestResponse, error) {
 	prefixLength := queryvalidation.NormalizedRuneCount(prefix)
 	if prefixLength < queryvalidation.MinQueryLength {
 		return nil, fmt.Errorf("prefix must be at least %d characters", queryvalidation.MinQueryLength)
@@ -368,14 +427,17 @@ func (s *WordService) SuggestWords(ctx context.Context, prefix string, cefrLevel
 		return nil, errors.New("prefix must not exceed 50 characters")
 	}
 
-	if limit <= 0 {
-		limit = 10
+	if opts.Limit <= 0 {
+		opts.Limit = 10
 	}
-	if limit > s.config.SuggestMaxLimit {
-		limit = s.config.SuggestMaxLimit
+	if opts.Limit > s.config.SuggestMaxLimit {
+		opts.Limit = s.config.SuggestMaxLimit
+	}
+	if err := repository.ValidateSuggestOptions(opts); err != nil {
+		return nil, err
 	}
 
-	words, err := s.repo.SuggestWords(ctx, prefix, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars, limit)
+	words, err := s.repo.SuggestWords(ctx, prefix, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -460,19 +522,16 @@ func (s *WordService) convertToWordResponse(word *repository.Word, variant *repo
 		WordAnnotations:   wordAnnotations(*word),
 		CEFRSourceSignals: entryCEFRSourceSignalResponses(word.CEFRSourceSignals),
 		Etymology:         etymologyResponse(word.Etymology),
-		LexicalRelations:  lexicalRelationResponses(word.LexicalRelations),
+		EntryDefinitions:  entryDefinitionResponses(word.EntryDefinitions),
+		EntryExamples:     entryExampleResponses(word.EntryExamples),
+	}
+	if strings.TrimSpace(word.Pos) != "" {
+		resp.POS = word.Pos
+		resp.POSName = posDisplayName(word.Pos)
 	}
 
 	if variant != nil {
-		resp.QueriedVariant = &QueriedVariantInfo{
-			FormText:        variant.FormText,
-			RelationKind:    variant.RelationKind,
-			SourceRelations: []string(variant.SourceRelations),
-			DisplayOrder:    variant.DisplayOrder,
-		}
-		if variant.FormType != nil {
-			resp.QueriedVariant.FormType = *variant.FormType
-		}
+		resp.QueriedVariant = queriedVariantInfo(variant)
 	}
 
 	if includePronunciations {
@@ -489,6 +548,39 @@ func (s *WordService) convertToWordResponse(word *repository.Word, variant *repo
 	return resp
 }
 
+func includeEntryGroupRelations(opts EntryGroupOptions) bool {
+	return opts.IncludeRelations == nil || *opts.IncludeRelations
+}
+
+func (s *WordService) relationGroupsByPOS(ctx context.Context, normalizedHeadword string, words []repository.Word, opts RelationQueryOptions) ([]POSRelationGroupsResponse, error) {
+	results := make([]POSRelationGroupsResponse, 0, len(words))
+	seenPOSCodes := make(map[int]struct{}, len(words))
+	for _, word := range words {
+		posCode, ok := entryPOSToHeadwordRelationPOSCode(word.Pos)
+		if !ok {
+			continue
+		}
+		if _, exists := seenPOSCodes[posCode]; exists {
+			continue
+		}
+		seenPOSCodes[posCode] = struct{}{}
+
+		groups, err := s.GetHeadwordRelationGroups(ctx, normalizedHeadword, posCode, opts)
+		if err != nil {
+			return nil, err
+		}
+		if len(groups) == 0 {
+			continue
+		}
+		results = append(results, POSRelationGroupsResponse{
+			POSCode: posCode,
+			POSName: headwordRelationPOSDisplayName(posCode),
+			Groups:  groups,
+		})
+	}
+	return results, nil
+}
+
 func wordAnnotations(word repository.Word) WordAnnotations {
 	annotations := WordAnnotations{TranslationZH: translationZH(word.SummariesZH)}
 	if signal := word.LearningSignal; signal != nil {
@@ -498,6 +590,8 @@ func wordAnnotations(word repository.Word) WordAnnotations {
 		annotations.CETLevel = int(signal.CETLevel)
 		annotations.OxfordLevel = int(signal.OxfordLevel)
 		annotations.SchoolLevel = int(signal.SchoolLevel)
+		annotations.SchoolLevelName = schoolLevelName(signal.SchoolLevel)
+		annotations.SchoolRunID = signal.SchoolRunID
 		annotations.FrequencyRank = signal.FrequencyRank
 		annotations.FrequencyCount = signal.FrequencyCount
 		annotations.CollinsStars = int(signal.CollinsStars)
@@ -560,7 +654,6 @@ func (s *WordService) convertSenses(senses []repository.Sense, lang string, pos 
 			DefinitionsEN:     glossENResponses(sense.GlossesEN),
 			DefinitionsZH:     glossZHResponses(sense.GlossesZH),
 			Labels:            senseLabelResponses(sense.Labels),
-			LexicalRelations:  lexicalRelationResponses(sense.LexicalRelations),
 			SenseOrder:        sense.SenseOrder,
 			Examples:          s.convertExamples(sense.Examples, lang),
 		}
@@ -633,6 +726,22 @@ func (s *WordService) convertVariant(v repository.WordVariant) *VariantResponse 
 	return resp
 }
 
+func queriedVariantInfo(variant *repository.WordVariant) *QueriedVariantInfo {
+	if variant == nil {
+		return nil
+	}
+	resp := &QueriedVariantInfo{
+		FormText:        variant.FormText,
+		RelationKind:    variant.RelationKind,
+		SourceRelations: []string(variant.SourceRelations),
+		DisplayOrder:    variant.DisplayOrder,
+	}
+	if variant.FormType != nil {
+		resp.FormType = *variant.FormType
+	}
+	return resp
+}
+
 func importRunResponse(run *model.ImportRun) *ImportRunResponse {
 	if run == nil || (run.ID == 0 && strings.TrimSpace(run.SourceName) == "") {
 		return nil
@@ -696,6 +805,39 @@ func etymologyResponse(etymology *model.EntryEtymology) *EtymologyResponse {
 	}
 }
 
+func entryDefinitionResponses(definitions []model.EntryDefinition) []EntryDefinitionResponse {
+	results := make([]EntryDefinitionResponse, 0, len(definitions))
+	for _, definition := range definitions {
+		results = append(results, EntryDefinitionResponse{
+			DefinitionID:    definition.ID,
+			Source:          definition.Source,
+			SourceRunID:     definition.SourceRunID,
+			SenseID:         definition.SenseID,
+			POS:             definition.POS,
+			DefinitionOrder: int(definition.DefinitionOrder),
+			TextZHHans:      definition.TextZHHans,
+			TextEN:          definition.TextEN,
+		})
+	}
+	return results
+}
+
+func entryExampleResponses(examples []model.EntryExample) []EntryExampleResponse {
+	results := make([]EntryExampleResponse, 0, len(examples))
+	for _, example := range examples {
+		results = append(results, EntryExampleResponse{
+			ExampleID:      example.ID,
+			Source:         example.Source,
+			SourceRunID:    example.SourceRunID,
+			SenseID:        example.SenseID,
+			ExampleOrder:   int(example.ExampleOrder),
+			SentenceEN:     example.SentenceEN,
+			SentenceZHHans: example.SentenceZHHans,
+		})
+	}
+	return results
+}
+
 func glossENResponses(glosses []model.SenseGlossEN) []GlossENResponse {
 	results := make([]GlossENResponse, 0, len(glosses))
 	for _, gloss := range glosses {
@@ -739,20 +881,6 @@ func senseLabelResponses(labels []model.SenseLabel) []SenseLabelResponse {
 	return results
 }
 
-func lexicalRelationResponses(relations []model.LexicalRelation) []LexicalRelationResponse {
-	results := make([]LexicalRelationResponse, 0, len(relations))
-	for _, relation := range relations {
-		results = append(results, LexicalRelationResponse{
-			RelationType:         relation.RelationType,
-			RelationName:         relationDisplayName(relation.RelationType),
-			TargetText:           relation.TargetText,
-			TargetTextNormalized: relation.TargetTextNormalized,
-			DisplayOrder:         int(relation.DisplayOrder),
-		})
-	}
-	return results
-}
-
 func labelTypeDisplayName(code string) string {
 	if name, ok := model.LabelTypeCodeToName()[code]; ok {
 		return name
@@ -776,6 +904,60 @@ func relationDisplayName(code string) string {
 	return code
 }
 
+func headwordRelationPOSDisplayName(code int) string {
+	if name, ok := model.HeadwordRelationPOSCodeToName()[code]; ok {
+		return name
+	}
+	return ""
+}
+
+func entryPOSToHeadwordRelationPOSCode(pos string) (int, bool) {
+	switch pos {
+	case model.POSNoun:
+		return model.HeadwordRelationPOSCodeNoun, true
+	case model.POSVerb:
+		return model.HeadwordRelationPOSCodeVerb, true
+	case model.POSAdjective:
+		return model.HeadwordRelationPOSCodeAdjective, true
+	case model.POSAdverb:
+		return model.HeadwordRelationPOSCodeAdverb, true
+	default:
+		return 0, false
+	}
+}
+
+func relationGroupResponses(groups []repository.HeadwordRelationGroup) []RelationGroupResponse {
+	results := make([]RelationGroupResponse, 0, len(groups))
+	for _, group := range groups {
+		results = append(results, RelationGroupResponse{
+			RelationType: group.RelationType,
+			RelationName: relationDisplayName(group.RelationType),
+			Items:        relationItemResponses(group.Items),
+		})
+	}
+	return results
+}
+
+func relationItemResponses(items []repository.HeadwordRelationItem) []RelationItemResponse {
+	results := make([]RelationItemResponse, 0, len(items))
+	for _, item := range items {
+		results = append(results, RelationItemResponse{
+			TargetHeadword:           item.TargetHeadword,
+			TargetHeadwordNormalized: item.TargetHeadwordNormalized,
+			TargetPOSCode:            item.TargetPOSCode,
+			TargetPOSName:            headwordRelationPOSDisplayName(item.TargetPOSCode),
+			SourceRelationType:       item.SourceRelationType,
+			SourceSynsetID:           item.SourceSynsetID,
+			TargetSynsetID:           item.TargetSynsetID,
+			SourceSenseID:            item.SourceSenseID,
+			TargetSenseID:            item.TargetSenseID,
+			EvidenceCount:            item.EvidenceCount,
+			HasTargetEntry:           item.HasTargetEntry,
+		})
+	}
+	return results
+}
+
 func timePtr(value time.Time) *time.Time {
 	if value.IsZero() {
 		return nil
@@ -788,6 +970,16 @@ func cefrLevelName(level int) string {
 		return ""
 	}
 	if name, ok := model.CEFRLevelCodeToName()[int16(level)]; ok && name != "unknown" {
+		return name
+	}
+	return ""
+}
+
+func schoolLevelName(level int16) string {
+	if level <= 0 {
+		return ""
+	}
+	if name, ok := model.SchoolLevelCodeToName()[level]; ok && name != "unknown" {
 		return name
 	}
 	return ""

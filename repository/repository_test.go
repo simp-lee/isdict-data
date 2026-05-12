@@ -23,6 +23,13 @@ func TestRepository_NilDBGuard(t *testing.T) {
 			},
 		},
 		{
+			name: "GetEntryGroupByHeadword",
+			run: func() error {
+				_, _, err := repo.GetEntryGroupByHeadword(ctx, "word", false, false, false)
+				return err
+			},
+		},
+		{
 			name: "GetWordsByVariant",
 			run: func() error {
 				_, _, err := repo.GetWordsByVariant(ctx, "word", nil, false, false)
@@ -44,23 +51,30 @@ func TestRepository_NilDBGuard(t *testing.T) {
 			},
 		},
 		{
-			name: "ListFeaturedCandidateHeadwords",
+			name: "GetHeadwordRelationGroups",
 			run: func() error {
-				_, err := repo.ListFeaturedCandidateHeadwords(ctx)
+				_, err := repo.GetHeadwordRelationGroups(ctx, "word", 1, RelationQueryOptions{})
+				return err
+			},
+		},
+		{
+			name: "ListFeaturedCandidates",
+			run: func() error {
+				_, err := repo.ListFeaturedCandidates(ctx)
 				return err
 			},
 		},
 		{
 			name: "SearchWords",
 			run: func() error {
-				_, _, err := repo.SearchWords(ctx, "word", nil, nil, nil, nil, nil, nil, 10, 0)
+				_, _, err := repo.SearchWords(ctx, "word", SearchOptions{Limit: 10})
 				return err
 			},
 		},
 		{
 			name: "SuggestWords",
 			run: func() error {
-				_, err := repo.SuggestWords(ctx, "wor", nil, nil, nil, nil, nil, 10)
+				_, err := repo.SuggestWords(ctx, "wor", SuggestOptions{Limit: 10})
 				return err
 			},
 		},
@@ -161,4 +175,53 @@ func TestEscapeLikePattern(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateSearchOptionsRejectsInvalidFilters(t *testing.T) {
+	tests := []struct {
+		name string
+		opts SearchOptions
+	}{
+		{name: "invalid pos", opts: SearchOptions{POS: stringPtr("not_a_pos")}},
+		{name: "invalid cefr", opts: SearchOptions{CEFRLevel: intPtr(99)}},
+		{name: "invalid oxford", opts: SearchOptions{OxfordLevel: intPtr(3)}},
+		{name: "invalid cet", opts: SearchOptions{CETLevel: intPtr(3)}},
+		{name: "invalid school", opts: SearchOptions{SchoolLevel: intPtr(99)}},
+		{name: "invalid max frequency", opts: SearchOptions{MaxFrequencyRank: intPtr(0)}},
+		{name: "invalid collins", opts: SearchOptions{MinCollinsStars: intPtr(6)}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateSearchOptions(tt.opts); !errors.Is(err, ErrInvalidSearchFilter) {
+				t.Fatalf("ValidateSearchOptions() error = %v, want ErrInvalidSearchFilter", err)
+			}
+		})
+	}
+}
+
+func TestValidateSearchOptionsAllowsUnknownLevelFilters(t *testing.T) {
+	zero := 0
+	opts := SearchOptions{
+		CEFRLevel:       &zero,
+		OxfordLevel:     &zero,
+		CETLevel:        &zero,
+		SchoolLevel:     &zero,
+		MinCollinsStars: &zero,
+	}
+
+	if err := ValidateSearchOptions(opts); err != nil {
+		t.Fatalf("ValidateSearchOptions() error = %v, want nil", err)
+	}
+}
+
+func TestValidateSuggestOptionsRejectsInvalidFilters(t *testing.T) {
+	opts := SuggestOptions{SchoolLevel: intPtr(99)}
+	if err := ValidateSuggestOptions(opts); !errors.Is(err, ErrInvalidSearchFilter) {
+		t.Fatalf("ValidateSuggestOptions() error = %v, want ErrInvalidSearchFilter", err)
+	}
+}
+
+func intPtr(value int) *int {
+	return &value
 }

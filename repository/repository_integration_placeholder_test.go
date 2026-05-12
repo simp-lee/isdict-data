@@ -43,7 +43,7 @@ func TestGetWordsByHeadwords_PropagatesDeadlineToDB(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	mock.ExpectQuery(`SELECT \* FROM "entries" WHERE normalized_headword IN \(.*\)`).
+	mock.ExpectQuery(`SELECT .* FROM "entries".*normalized_headword IN \(.*\)`).
 		WithArgs("hello", "world").
 		WillDelayFor(2 * time.Second).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "headword", "normalized_headword"}))
@@ -57,54 +57,54 @@ func TestGetWordsByHeadwords_PropagatesDeadlineToDB(t *testing.T) {
 	}
 }
 
-func TestListFeaturedCandidateHeadwords_ReturnsQualityFilteredHeadwords(t *testing.T) {
+func TestListFeaturedCandidates_ReturnsQualityFilteredCandidates(t *testing.T) {
 	repo, mock := newMockRepository(t)
 
-	mock.ExpectQuery(`SELECT .*headword.* FROM "featured_candidates"`).
-		WillReturnRows(sqlmock.NewRows([]string{"headword"}).
-			AddRow("alpha").
-			AddRow("go after"))
+	mock.ExpectQuery(`SELECT entry_id, headword FROM "featured_candidates"`).
+		WillReturnRows(sqlmock.NewRows([]string{"entry_id", "headword"}).
+			AddRow(10, "alpha").
+			AddRow(20, "go after"))
 
-	headwords, err := repo.ListFeaturedCandidateHeadwords(context.Background())
+	candidates, err := repo.ListFeaturedCandidates(context.Background())
 	if err != nil {
-		t.Fatalf("ListFeaturedCandidateHeadwords() error = %v", err)
+		t.Fatalf("ListFeaturedCandidates() error = %v", err)
 	}
-	if len(headwords) != 2 {
-		t.Fatalf("len(headwords) = %d, want %d", len(headwords), 2)
+	if len(candidates) != 2 {
+		t.Fatalf("len(candidates) = %d, want %d", len(candidates), 2)
 	}
-	if headwords[0] != "alpha" || headwords[1] != "go after" {
-		t.Fatalf("headwords = %#v, want %#v", headwords, []string{"alpha", "go after"})
+	if candidates[0].EntryID != 10 || candidates[0].Headword != "alpha" || candidates[1].EntryID != 20 || candidates[1].Headword != "go after" {
+		t.Fatalf("candidates = %#v, want exact entry ids and headwords", candidates)
 	}
 }
 
-func TestListFeaturedCandidateHeadwords_ReturnsEmptySliceWhenNoRows(t *testing.T) {
+func TestListFeaturedCandidates_ReturnsEmptySliceWhenNoRows(t *testing.T) {
 	repo, mock := newMockRepository(t)
 
-	mock.ExpectQuery(`SELECT .*headword.* FROM "featured_candidates"`).
-		WillReturnRows(sqlmock.NewRows([]string{"headword"}))
+	mock.ExpectQuery(`SELECT entry_id, headword FROM "featured_candidates"`).
+		WillReturnRows(sqlmock.NewRows([]string{"entry_id", "headword"}))
 
-	headwords, err := repo.ListFeaturedCandidateHeadwords(context.Background())
+	candidates, err := repo.ListFeaturedCandidates(context.Background())
 	if err != nil {
-		t.Fatalf("ListFeaturedCandidateHeadwords() error = %v", err)
+		t.Fatalf("ListFeaturedCandidates() error = %v", err)
 	}
-	if len(headwords) != 0 {
-		t.Fatalf("len(headwords) = %d, want %d", len(headwords), 0)
+	if len(candidates) != 0 {
+		t.Fatalf("len(candidates) = %d, want %d", len(candidates), 0)
 	}
-	if headwords == nil {
+	if candidates == nil {
 		t.Fatal("expected empty slice, got nil")
 	}
 }
 
-func TestListFeaturedCandidateHeadwords_PropagatesDatabaseError(t *testing.T) {
+func TestListFeaturedCandidates_PropagatesDatabaseError(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	wantErr := errors.New("db unavailable")
 
-	mock.ExpectQuery(`SELECT .*headword.* FROM "featured_candidates"`).
+	mock.ExpectQuery(`SELECT entry_id, headword FROM "featured_candidates"`).
 		WillReturnError(wantErr)
 
-	_, err := repo.ListFeaturedCandidateHeadwords(context.Background())
+	_, err := repo.ListFeaturedCandidates(context.Background())
 	if !errors.Is(err, wantErr) {
-		t.Fatalf("ListFeaturedCandidateHeadwords() error = %v, want %v", err, wantErr)
+		t.Fatalf("ListFeaturedCandidates() error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -118,7 +118,7 @@ func TestSuggestWords_PropagatesDeadlineToRawQuery(t *testing.T) {
 		WillDelayFor(50 * time.Millisecond).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "frequency_rank"}))
 
-	_, err := repo.SuggestWords(ctx, "Air", nil, nil, nil, nil, nil, 5)
+	_, err := repo.SuggestWords(ctx, "Air", SuggestOptions{Limit: 5})
 	if !errors.Is(err, sqlmock.ErrCancelled) {
 		t.Fatalf("expected canceled raw query error, got %v", err)
 	}

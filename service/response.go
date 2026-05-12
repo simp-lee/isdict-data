@@ -14,6 +14,8 @@ type WordAnnotations struct {
 	OxfordLevel       int        `json:"oxford_level"`
 	OxfordRunID       *int64     `json:"oxford_run_id,omitempty"`
 	SchoolLevel       int        `json:"school_level"`
+	SchoolLevelName   string     `json:"school_level_name,omitempty"`
+	SchoolRunID       *int64     `json:"school_run_id,omitempty"`
 	FrequencyRank     int        `json:"frequency_rank"`
 	FrequencyCount    int        `json:"frequency_count"`
 	FrequencyRunID    *int64     `json:"frequency_run_id,omitempty"`
@@ -26,6 +28,8 @@ type WordAnnotations struct {
 type WordResponse struct {
 	ID                  int64                        `json:"id"`
 	Headword            string                       `json:"headword"`
+	POS                 string                       `json:"pos,omitempty"`
+	POSName             string                       `json:"pos_name,omitempty"`
 	SourceRunID         int64                        `json:"source_run_id,omitempty"`
 	SourceRun           *ImportRunResponse           `json:"source_run,omitempty"`
 	WordAnnotations                                  // Embedded: all annotation fields
@@ -36,7 +40,29 @@ type WordResponse struct {
 	PronunciationAudios []PronunciationAudioResponse `json:"pronunciation_audios,omitempty"`
 	Senses              []SenseResponse              `json:"senses,omitempty"`
 	Variants            []VariantResponse            `json:"variants,omitempty"`
-	LexicalRelations    []LexicalRelationResponse    `json:"lexical_relations,omitempty"`
+	EntryDefinitions    []EntryDefinitionResponse    `json:"entry_definitions,omitempty"`
+	EntryExamples       []EntryExampleResponse       `json:"entry_examples,omitempty"`
+}
+
+type EntryDefinitionResponse struct {
+	DefinitionID    int64   `json:"definition_id"`
+	Source          string  `json:"source"`
+	SourceRunID     int64   `json:"source_run_id"`
+	SenseID         *int64  `json:"sense_id,omitempty"`
+	POS             string  `json:"pos"`
+	DefinitionOrder int     `json:"definition_order"`
+	TextZHHans      string  `json:"text_zh_hans"`
+	TextEN          *string `json:"text_en,omitempty"`
+}
+
+type EntryExampleResponse struct {
+	ExampleID      int64   `json:"example_id"`
+	Source         string  `json:"source"`
+	SourceRunID    int64   `json:"source_run_id"`
+	SenseID        *int64  `json:"sense_id,omitempty"`
+	ExampleOrder   int     `json:"example_order"`
+	SentenceEN     string  `json:"sentence_en"`
+	SentenceZHHans *string `json:"sentence_zh_hans,omitempty"`
 }
 
 type PronunciationResponse struct {
@@ -67,7 +93,6 @@ type SenseResponse struct {
 	DefinitionsEN     []GlossENResponse          `json:"definitions_en,omitempty"`
 	DefinitionsZH     []GlossZHResponse          `json:"definitions_zh,omitempty"`
 	Labels            []SenseLabelResponse       `json:"labels,omitempty"`
-	LexicalRelations  []LexicalRelationResponse  `json:"lexical_relations,omitempty"`
 	SenseOrder        int                        `json:"sense_order"`
 	Examples          []ExampleResponse          `json:"examples,omitempty"`
 }
@@ -107,7 +132,40 @@ type VariantReverseResponse struct {
 	Pronunciations      []PronunciationResponse      `json:"pronunciations,omitempty"`
 	PronunciationAudios []PronunciationAudioResponse `json:"pronunciation_audios,omitempty"`
 	Senses              []SenseResponse              `json:"senses,omitempty"`
-	LexicalRelations    []LexicalRelationResponse    `json:"lexical_relations,omitempty"`
+}
+
+type EntryGroupResponse struct {
+	Headword            string                      `json:"headword"`
+	HeadwordNormalized  string                      `json:"headword_normalized"`
+	Entries             []WordResponse              `json:"entries"`
+	RelationGroupsByPOS []POSRelationGroupsResponse `json:"relation_groups_by_pos,omitempty"`
+	QueriedVariant      *QueriedVariantInfo         `json:"queried_variant,omitempty"`
+}
+
+type POSRelationGroupsResponse struct {
+	POSCode int                     `json:"pos_code"`
+	POSName string                  `json:"pos_name"`
+	Groups  []RelationGroupResponse `json:"groups"`
+}
+
+type RelationGroupResponse struct {
+	RelationType string                 `json:"relation_type"`
+	RelationName string                 `json:"relation_name"`
+	Items        []RelationItemResponse `json:"items"`
+}
+
+type RelationItemResponse struct {
+	TargetHeadword           string `json:"target_headword"`
+	TargetHeadwordNormalized string `json:"target_headword_normalized"`
+	TargetPOSCode            int    `json:"target_pos_code"`
+	TargetPOSName            string `json:"target_pos_name"`
+	SourceRelationType       string `json:"source_relation_type"`
+	SourceSynsetID           string `json:"source_synset_id"`
+	TargetSynsetID           string `json:"target_synset_id"`
+	SourceSenseID            string `json:"source_sense_id"`
+	TargetSenseID            string `json:"target_sense_id"`
+	EvidenceCount            int    `json:"evidence_count"`
+	HasTargetEntry           bool   `json:"has_target_entry"`
 }
 
 type SearchResultResponse struct {
@@ -196,12 +254,4 @@ type SenseLabelResponse struct {
 	Code     string `json:"code"`
 	Name     string `json:"name,omitempty"`
 	Order    int    `json:"order"`
-}
-
-type LexicalRelationResponse struct {
-	RelationType         string `json:"relation_type"`
-	RelationName         string `json:"relation_name,omitempty"`
-	TargetText           string `json:"target_text"`
-	TargetTextNormalized string `json:"target_text_normalized,omitempty"`
-	DisplayOrder         int    `json:"display_order,omitempty"`
 }

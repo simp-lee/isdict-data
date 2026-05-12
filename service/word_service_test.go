@@ -16,21 +16,30 @@ import (
 
 // mockRepository is a mock implementation of the WordRepository interface
 type mockRepository struct {
-	getWordByHeadwordFunc              func(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error)
-	getWordsByHeadwordsFunc            func(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error)
-	getWordsByVariantsFunc             func(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error)
-	getWordsByVariantFunc              func(ctx context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error)
-	listFeaturedCandidateHeadwordsFunc func(ctx context.Context) ([]string, error)
-	searchWordsFunc                    func(ctx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error)
-	suggestWordsFunc                   func(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error)
-	searchPhrasesFunc                  func(ctx context.Context, keyword string, limit int) ([]repository.Word, error)
-	getPronunciationsByWordIDFunc      func(ctx context.Context, wordID int64, accent *string) ([]repository.Pronunciation, error)
-	getSensesByWordIDFunc              func(ctx context.Context, wordID int64, pos *string) ([]repository.Sense, error)
+	getWordByHeadwordFunc         func(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error)
+	getEntryGroupByHeadwordFunc   func(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, *repository.WordVariant, error)
+	getWordsByHeadwordsFunc       func(ctx context.Context, headwords []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, error)
+	getWordsByVariantsFunc        func(ctx context.Context, variants []string, includeVariants, includePronunciations, includeSenses bool) ([]repository.BatchVariantMatch, error)
+	getHeadwordRelationGroupsFunc func(ctx context.Context, normalizedHeadword string, posCode int, opts repository.RelationQueryOptions) ([]repository.HeadwordRelationGroup, error)
+	getWordsByVariantFunc         func(ctx context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error)
+	listFeaturedCandidatesFunc    func(ctx context.Context) ([]repository.FeaturedCandidate, error)
+	searchWordsFunc               func(ctx context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error)
+	suggestWordsFunc              func(ctx context.Context, prefix string, opts repository.SuggestOptions) ([]repository.Word, error)
+	searchPhrasesFunc             func(ctx context.Context, keyword string, limit int) ([]repository.Word, error)
+	getPronunciationsByWordIDFunc func(ctx context.Context, wordID int64, accent *string) ([]repository.Pronunciation, error)
+	getSensesByWordIDFunc         func(ctx context.Context, wordID int64, pos *string) ([]repository.Sense, error)
 }
 
 func (m *mockRepository) GetWordByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
 	if m.getWordByHeadwordFunc != nil {
 		return m.getWordByHeadwordFunc(ctx, headword, includeVariants, includePronunciations, includeSenses)
+	}
+	return nil, nil, repository.ErrWordNotFound
+}
+
+func (m *mockRepository) GetEntryGroupByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, *repository.WordVariant, error) {
+	if m.getEntryGroupByHeadwordFunc != nil {
+		return m.getEntryGroupByHeadwordFunc(ctx, headword, includeVariants, includePronunciations, includeSenses)
 	}
 	return nil, nil, repository.ErrWordNotFound
 }
@@ -49,6 +58,13 @@ func (m *mockRepository) GetWordsByVariants(ctx context.Context, variants []stri
 	return []repository.BatchVariantMatch{}, nil
 }
 
+func (m *mockRepository) GetHeadwordRelationGroups(ctx context.Context, normalizedHeadword string, posCode int, opts repository.RelationQueryOptions) ([]repository.HeadwordRelationGroup, error) {
+	if m.getHeadwordRelationGroupsFunc != nil {
+		return m.getHeadwordRelationGroupsFunc(ctx, normalizedHeadword, posCode, opts)
+	}
+	return []repository.HeadwordRelationGroup{}, nil
+}
+
 func (m *mockRepository) GetWordsByVariant(ctx context.Context, variant string, kind *string, includePronunciations, includeSenses bool) ([]repository.Word, []repository.WordVariant, error) {
 	if m.getWordsByVariantFunc != nil {
 		return m.getWordsByVariantFunc(ctx, variant, kind, includePronunciations, includeSenses)
@@ -56,23 +72,23 @@ func (m *mockRepository) GetWordsByVariant(ctx context.Context, variant string, 
 	return nil, nil, repository.ErrVariantNotFound
 }
 
-func (m *mockRepository) ListFeaturedCandidateHeadwords(ctx context.Context) ([]string, error) {
-	if m.listFeaturedCandidateHeadwordsFunc != nil {
-		return m.listFeaturedCandidateHeadwordsFunc(ctx)
+func (m *mockRepository) ListFeaturedCandidates(ctx context.Context) ([]repository.FeaturedCandidate, error) {
+	if m.listFeaturedCandidatesFunc != nil {
+		return m.listFeaturedCandidatesFunc(ctx)
 	}
-	return []string{}, nil
+	return []repository.FeaturedCandidate{}, nil
 }
 
-func (m *mockRepository) SearchWords(ctx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+func (m *mockRepository) SearchWords(ctx context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error) {
 	if m.searchWordsFunc != nil {
-		return m.searchWordsFunc(ctx, keyword, pos, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars, limit, offset)
+		return m.searchWordsFunc(ctx, keyword, opts)
 	}
 	return []repository.Word{}, 0, nil
 }
 
-func (m *mockRepository) SuggestWords(ctx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
+func (m *mockRepository) SuggestWords(ctx context.Context, prefix string, opts repository.SuggestOptions) ([]repository.Word, error) {
 	if m.suggestWordsFunc != nil {
-		return m.suggestWordsFunc(ctx, prefix, cefrLevel, oxfordLevel, cetLevel, maxFrequencyRank, minCollinsStars, limit)
+		return m.suggestWordsFunc(ctx, prefix, opts)
 	}
 	return []repository.Word{}, nil
 }
@@ -181,6 +197,8 @@ func TestWordService_ForwardsContextToRepository(t *testing.T) {
 		run  func(*testing.T, context.Context, ServiceConfig)
 	}{
 		{name: "GetWordByHeadword", run: runContextForwardingGetWordByHeadword},
+		{name: "GetEntryGroupByHeadword", run: runContextForwardingGetEntryGroupByHeadword},
+		{name: "GetHeadwordRelationGroups", run: runContextForwardingGetHeadwordRelationGroups},
 		{name: "GetWordsByVariant", run: runContextForwardingGetWordsByVariant},
 		{name: "GetWordsBatch", run: runContextForwardingGetWordsBatch},
 		{name: "SearchWords", run: runContextForwardingSearchWords},
@@ -205,6 +223,32 @@ func runContextForwardingGetWordByHeadword(t *testing.T, ctx context.Context, cf
 		},
 	}, cfg)
 	_, err := service.GetWordByHeadword(ctx, "learn", nil, false, false, false)
+	assertNoServiceError(t, err)
+}
+
+func runContextForwardingGetEntryGroupByHeadword(t *testing.T, ctx context.Context, cfg ServiceConfig) {
+	service := NewWordService(&mockRepository{
+		getEntryGroupByHeadwordFunc: func(callCtx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, *repository.WordVariant, error) {
+			assertForwardedContext(t, ctx, callCtx)
+			return []repository.Word{{ID: 1, Headword: headword, NormalizedHeadword: "learn", Pos: model.POSVerb}}, nil, nil
+		},
+		getHeadwordRelationGroupsFunc: func(callCtx context.Context, normalizedHeadword string, posCode int, opts repository.RelationQueryOptions) ([]repository.HeadwordRelationGroup, error) {
+			assertForwardedContext(t, ctx, callCtx)
+			return []repository.HeadwordRelationGroup{}, nil
+		},
+	}, cfg)
+	_, err := service.GetEntryGroupByHeadword(ctx, "learn", EntryGroupOptions{})
+	assertNoServiceError(t, err)
+}
+
+func runContextForwardingGetHeadwordRelationGroups(t *testing.T, ctx context.Context, cfg ServiceConfig) {
+	service := NewWordService(&mockRepository{
+		getHeadwordRelationGroupsFunc: func(callCtx context.Context, normalizedHeadword string, posCode int, opts repository.RelationQueryOptions) ([]repository.HeadwordRelationGroup, error) {
+			assertForwardedContext(t, ctx, callCtx)
+			return []repository.HeadwordRelationGroup{}, nil
+		},
+	}, cfg)
+	_, err := service.GetHeadwordRelationGroups(ctx, "learn", model.HeadwordRelationPOSCodeVerb, RelationQueryOptions{})
 	assertNoServiceError(t, err)
 }
 
@@ -256,23 +300,23 @@ func runContextForwardingGetWordsBatch(t *testing.T, ctx context.Context, cfg Se
 
 func runContextForwardingSearchWords(t *testing.T, ctx context.Context, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
-		searchWordsFunc: func(callCtx context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(callCtx context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error) {
 			assertForwardedContext(t, ctx, callCtx)
 			return nil, 0, nil
 		},
 	}, cfg)
-	_, _, err := service.SearchWords(ctx, "learn", nil, nil, nil, nil, nil, nil, 20, 0)
+	_, _, err := service.SearchWords(ctx, "learn", SearchOptions{Limit: 20})
 	assertNoServiceError(t, err)
 }
 
 func runContextForwardingSuggestWords(t *testing.T, ctx context.Context, cfg ServiceConfig) {
 	service := NewWordService(&mockRepository{
-		suggestWordsFunc: func(callCtx context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
+		suggestWordsFunc: func(callCtx context.Context, prefix string, opts repository.SuggestOptions) ([]repository.Word, error) {
 			assertForwardedContext(t, ctx, callCtx)
 			return nil, nil
 		},
 	}, cfg)
-	_, err := service.SuggestWords(ctx, "lea", nil, nil, nil, nil, nil, 10)
+	_, err := service.SuggestWords(ctx, "lea", SuggestOptions{Limit: 10})
 	assertNoServiceError(t, err)
 }
 
@@ -599,10 +643,10 @@ func TestSearchWords_LimitValidation(t *testing.T) {
 	expectedLimits := []int{100, 20, 20} // max for >max, default for <=0, default for negative
 
 	mockRepo := &mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(_ context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error) {
 			if callCount < len(expectedLimits) {
-				if limit != expectedLimits[callCount] {
-					t.Errorf("Call %d: Expected limit to be %d, got %d", callCount, expectedLimits[callCount], limit)
+				if opts.Limit != expectedLimits[callCount] {
+					t.Errorf("Call %d: Expected limit to be %d, got %d", callCount, expectedLimits[callCount], opts.Limit)
 				}
 			}
 			callCount++
@@ -613,19 +657,19 @@ func TestSearchWords_LimitValidation(t *testing.T) {
 	service := NewWordService(mockRepo, cfg)
 
 	// Test with limit > max (should use max)
-	_, _, err := service.SearchWords(context.Background(), "test", nil, nil, nil, nil, nil, nil, 101, 0)
+	_, _, err := service.SearchWords(context.Background(), "test", SearchOptions{Limit: 101})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// Test with limit <= 0 (should use default)
-	_, _, err = service.SearchWords(context.Background(), "test", nil, nil, nil, nil, nil, nil, 0, 0)
+	_, _, err = service.SearchWords(context.Background(), "test", SearchOptions{})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// Test with negative limit (should use default)
-	_, _, err = service.SearchWords(context.Background(), "test", nil, nil, nil, nil, nil, nil, -1, 0)
+	_, _, err = service.SearchWords(context.Background(), "test", SearchOptions{Limit: -1})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -635,9 +679,9 @@ func TestSearchWords_OffsetValidation(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
-			if offset != 0 {
-				t.Errorf("Expected offset to be reset to 0, got %d", offset)
+		searchWordsFunc: func(_ context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error) {
+			if opts.Offset != 0 {
+				t.Errorf("Expected offset to be reset to 0, got %d", opts.Offset)
 			}
 			return []repository.Word{}, 0, nil
 		},
@@ -645,7 +689,7 @@ func TestSearchWords_OffsetValidation(t *testing.T) {
 
 	service := NewWordService(mockRepo, cfg)
 
-	_, _, err := service.SearchWords(context.Background(), "test", nil, nil, nil, nil, nil, nil, 20, -10)
+	_, _, err := service.SearchWords(context.Background(), "test", SearchOptions{Limit: 20, Offset: -10})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -658,9 +702,9 @@ func TestSuggestWords_LimitValidation(t *testing.T) {
 	expectedLimits := []int{50, 10, 10}
 
 	mockRepo := &mockRepository{
-		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
-			if callCount < len(expectedLimits) && limit != expectedLimits[callCount] {
-				t.Errorf("Call %d: Expected limit to be %d, got %d", callCount, expectedLimits[callCount], limit)
+		suggestWordsFunc: func(_ context.Context, prefix string, opts repository.SuggestOptions) ([]repository.Word, error) {
+			if callCount < len(expectedLimits) && opts.Limit != expectedLimits[callCount] {
+				t.Errorf("Call %d: Expected limit to be %d, got %d", callCount, expectedLimits[callCount], opts.Limit)
 			}
 			callCount++
 			return []repository.Word{}, nil
@@ -669,17 +713,47 @@ func TestSuggestWords_LimitValidation(t *testing.T) {
 
 	service := NewWordService(mockRepo, cfg)
 
-	_, err := service.SuggestWords(context.Background(), "test", nil, nil, nil, nil, nil, 51)
+	_, err := service.SuggestWords(context.Background(), "test", SuggestOptions{Limit: 51})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = service.SuggestWords(context.Background(), "test", nil, nil, nil, nil, nil, 0)
+	_, err = service.SuggestWords(context.Background(), "test", SuggestOptions{})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = service.SuggestWords(context.Background(), "test", nil, nil, nil, nil, nil, -1)
+	_, err = service.SuggestWords(context.Background(), "test", SuggestOptions{Limit: -1})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
+func TestSearchAndSuggestRejectInvalidFiltersBeforeRepositoryCall(t *testing.T) {
+	cfg := createTestConfig()
+	repoCalls := 0
+	mockRepo := &mockRepository{
+		searchWordsFunc: func(_ context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error) {
+			repoCalls++
+			return nil, 0, nil
+		},
+		suggestWordsFunc: func(_ context.Context, prefix string, opts repository.SuggestOptions) ([]repository.Word, error) {
+			repoCalls++
+			return nil, nil
+		},
+	}
+	service := NewWordService(mockRepo, cfg)
+
+	_, _, err := service.SearchWords(context.Background(), "test", SearchOptions{SchoolLevel: intPtr(99), Limit: 10})
+	if !errors.Is(err, repository.ErrInvalidSearchFilter) {
+		t.Fatalf("SearchWords() error = %v, want ErrInvalidSearchFilter", err)
+	}
+
+	_, err = service.SuggestWords(context.Background(), "test", SuggestOptions{MinCollinsStars: intPtr(6), Limit: 10})
+	if !errors.Is(err, repository.ErrInvalidSearchFilter) {
+		t.Fatalf("SuggestWords() error = %v, want ErrInvalidSearchFilter", err)
+	}
+
+	if repoCalls != 0 {
+		t.Fatalf("repository calls = %d, want 0", repoCalls)
 	}
 }
 
@@ -919,7 +993,7 @@ func TestSearchWords_MapsCEFRLevelAndSource(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(_ context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error) {
 			return []repository.Word{{
 				ID:             2,
 				Headword:       "test",
@@ -931,7 +1005,7 @@ func TestSearchWords_MapsCEFRLevelAndSource(t *testing.T) {
 
 	service := NewWordService(mockRepo, cfg)
 
-	results, _, err := service.SearchWords(context.Background(), "test", nil, nil, nil, nil, nil, nil, 20, 0)
+	results, _, err := service.SearchWords(context.Background(), "test", SearchOptions{Limit: 20})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -953,7 +1027,7 @@ func TestSuggestWords_MapsCEFRLevel(t *testing.T) {
 	cfg := createTestConfig()
 
 	mockRepo := &mockRepository{
-		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
+		suggestWordsFunc: func(_ context.Context, prefix string, opts repository.SuggestOptions) ([]repository.Word, error) {
 			return []repository.Word{{
 				Headword:       "learn",
 				LearningSignal: entryLearningSignal(5, "cefrj"),
@@ -963,7 +1037,7 @@ func TestSuggestWords_MapsCEFRLevel(t *testing.T) {
 
 	service := NewWordService(mockRepo, cfg)
 
-	results, err := service.SuggestWords(context.Background(), "lea", nil, nil, nil, nil, nil, 10)
+	results, err := service.SuggestWords(context.Background(), "lea", SuggestOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1077,6 +1151,7 @@ func runSchoolLevelGetWordByHeadword(t *testing.T, cfg ServiceConfig) {
 				Headword: headword,
 				LearningSignal: &model.EntryLearningSignal{
 					SchoolLevel: 3,
+					SchoolRunID: int64Ptr(300),
 				},
 			}, nil, nil
 		},
@@ -1086,8 +1161,8 @@ func runSchoolLevelGetWordByHeadword(t *testing.T, cfg ServiceConfig) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if result.SchoolLevel != 3 {
-		t.Fatalf("Expected SchoolLevel 3, got %d", result.SchoolLevel)
+	if result.SchoolLevel != 3 || result.SchoolLevelName != "大学" || result.SchoolRunID == nil || *result.SchoolRunID != 300 {
+		t.Fatalf("Expected SchoolLevel 3/大学 with run 300, got %#v", result.WordAnnotations)
 	}
 }
 
@@ -1099,6 +1174,7 @@ func runSchoolLevelGetWordsByVariant(t *testing.T, cfg ServiceConfig) {
 					Headword: "learn",
 					LearningSignal: &model.EntryLearningSignal{
 						SchoolLevel: 2,
+						SchoolRunID: int64Ptr(200),
 					},
 				}}, []repository.WordVariant{{
 					WordID:   1,
@@ -1114,58 +1190,68 @@ func runSchoolLevelGetWordsByVariant(t *testing.T, cfg ServiceConfig) {
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
-	if results[0].SchoolLevel != 2 {
-		t.Fatalf("Expected SchoolLevel 2, got %d", results[0].SchoolLevel)
+	if results[0].SchoolLevel != 2 || results[0].SchoolLevelName != "高中" || results[0].SchoolRunID == nil || *results[0].SchoolRunID != 200 {
+		t.Fatalf("Expected SchoolLevel 2/高中 with run 200, got %#v", results[0].WordAnnotations)
 	}
 }
 
 func runSchoolLevelSearchWords(t *testing.T, cfg ServiceConfig) {
+	schoolFilter := 1
 	service := NewWordService(&mockRepository{
-		searchWordsFunc: func(_ context.Context, keyword string, pos *string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit, offset int) ([]repository.Word, int64, error) {
+		searchWordsFunc: func(_ context.Context, keyword string, opts repository.SearchOptions) ([]repository.Word, int64, error) {
+			if opts.SchoolLevel == nil || *opts.SchoolLevel != schoolFilter {
+				t.Fatalf("schoolLevel filter = %#v, want %d", opts.SchoolLevel, schoolFilter)
+			}
 			return []repository.Word{{
 				ID:       1,
 				Headword: keyword,
 				Pos:      model.POSNoun,
 				LearningSignal: &model.EntryLearningSignal{
 					SchoolLevel: 1,
+					SchoolRunID: int64Ptr(100),
 				},
 			}}, 1, nil
 		},
 	}, cfg)
 
-	results, _, err := service.SearchWords(context.Background(), "learn", nil, nil, nil, nil, nil, nil, 20, 0)
+	results, _, err := service.SearchWords(context.Background(), "learn", SearchOptions{SchoolLevel: &schoolFilter, Limit: 20})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
-	if results[0].SchoolLevel != 1 {
-		t.Fatalf("Expected SchoolLevel 1, got %d", results[0].SchoolLevel)
+	if results[0].SchoolLevel != 1 || results[0].SchoolLevelName != "初中" || results[0].SchoolRunID == nil || *results[0].SchoolRunID != 100 {
+		t.Fatalf("Expected SchoolLevel 1/初中 with run 100, got %#v", results[0].WordAnnotations)
 	}
 }
 
 func runSchoolLevelSuggestWords(t *testing.T, cfg ServiceConfig) {
+	schoolFilter := 2
 	service := NewWordService(&mockRepository{
-		suggestWordsFunc: func(_ context.Context, prefix string, cefrLevel *int, oxfordLevel *int, cetLevel *int, maxFrequencyRank *int, minCollinsStars *int, limit int) ([]repository.Word, error) {
+		suggestWordsFunc: func(_ context.Context, prefix string, opts repository.SuggestOptions) ([]repository.Word, error) {
+			if opts.SchoolLevel == nil || *opts.SchoolLevel != schoolFilter {
+				t.Fatalf("schoolLevel filter = %#v, want %d", opts.SchoolLevel, schoolFilter)
+			}
 			return []repository.Word{{
 				Headword: prefix,
 				LearningSignal: &model.EntryLearningSignal{
 					SchoolLevel: 2,
+					SchoolRunID: int64Ptr(201),
 				},
 			}}, nil
 		},
 	}, cfg)
 
-	results, err := service.SuggestWords(context.Background(), "lea", nil, nil, nil, nil, nil, 10)
+	results, err := service.SuggestWords(context.Background(), "lea", SuggestOptions{SchoolLevel: &schoolFilter, Limit: 10})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
-	if results[0].SchoolLevel != 2 {
-		t.Fatalf("Expected SchoolLevel 2, got %d", results[0].SchoolLevel)
+	if results[0].SchoolLevel != 2 || results[0].SchoolLevelName != "高中" || results[0].SchoolRunID == nil || *results[0].SchoolRunID != 201 {
+		t.Fatalf("Expected SchoolLevel 2/高中 with run 201, got %#v", results[0].WordAnnotations)
 	}
 }
 
@@ -1176,6 +1262,7 @@ func runSchoolLevelSearchPhrases(t *testing.T, cfg ServiceConfig) {
 				Headword: keyword + " up",
 				LearningSignal: &model.EntryLearningSignal{
 					SchoolLevel: 3,
+					SchoolRunID: int64Ptr(301),
 				},
 			}}, nil
 		},
@@ -1188,12 +1275,16 @@ func runSchoolLevelSearchPhrases(t *testing.T, cfg ServiceConfig) {
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
-	if results[0].SchoolLevel != 3 {
-		t.Fatalf("Expected SchoolLevel 3, got %d", results[0].SchoolLevel)
+	if results[0].SchoolLevel != 3 || results[0].SchoolLevelName != "大学" || results[0].SchoolRunID == nil || *results[0].SchoolRunID != 301 {
+		t.Fatalf("Expected SchoolLevel 3/大学 with run 301, got %#v", results[0].WordAnnotations)
 	}
 }
 
 func stringPtr(v string) *string {
+	return &v
+}
+
+func intPtr(v int) *int {
 	return &v
 }
 
@@ -1230,6 +1321,7 @@ func TestGetWordByHeadword_ExposesCommonsV1Data(t *testing.T) {
 			CETLevel:       1,
 			CETRunID:       int64Ptr(93),
 			SchoolLevel:    2,
+			SchoolRunID:    int64Ptr(99),
 			FrequencyRank:  123,
 			FrequencyCount: 456,
 			FrequencyRunID: int64Ptr(94),
@@ -1326,15 +1418,27 @@ func TestGetWordByHeadword_ExposesCommonsV1Data(t *testing.T) {
 				ExampleOrder: 1,
 				SentenceEN:   "I learn quickly.",
 			}},
-			LexicalRelations: []model.LexicalRelation{{
-				ID:                   35,
-				EntryID:              10,
-				SenseID:              int64Ptr(30),
-				RelationType:         model.RelationTypeSynonym,
-				TargetText:           "study",
-				TargetTextNormalized: "study",
-				DisplayOrder:         1,
-			}},
+		}},
+		EntryDefinitions: []model.EntryDefinition{{
+			ID:              50,
+			EntryID:         10,
+			SenseID:         int64Ptr(30),
+			POS:             model.POSVerb,
+			Source:          "school",
+			SourceRunID:     99,
+			DefinitionOrder: 1,
+			TextZHHans:      "学习",
+			TextEN:          stringPtr("to gain knowledge"),
+		}},
+		EntryExamples: []model.EntryExample{{
+			ID:             51,
+			EntryID:        10,
+			SenseID:        int64Ptr(30),
+			Source:         "school",
+			SourceRunID:    99,
+			ExampleOrder:   1,
+			SentenceEN:     "I learn at school.",
+			SentenceZHHans: stringPtr("我在学校学习。"),
 		}},
 		WordVariants: []repository.WordVariant{{
 			ID:              40,
@@ -1345,14 +1449,6 @@ func TestGetWordByHeadword_ExposesCommonsV1Data(t *testing.T) {
 			FormType:        stringPtr("past"),
 			SourceRelations: pq.StringArray{"past"},
 			DisplayOrder:    1,
-		}},
-		LexicalRelations: []model.LexicalRelation{{
-			ID:                   50,
-			EntryID:              10,
-			RelationType:         model.RelationTypeDerived,
-			TargetText:           "learner",
-			TargetTextNormalized: "learner",
-			DisplayOrder:         2,
 		}},
 	}
 
@@ -1373,8 +1469,14 @@ func TestGetWordByHeadword_ExposesCommonsV1Data(t *testing.T) {
 	if resp.SourceRun == nil || resp.SourceRun.SourceName != "wiktionary" {
 		t.Fatalf("source run not exposed: %#v", resp.SourceRun)
 	}
+	if resp.POS != model.POSVerb || resp.POSName != "Verb" {
+		t.Fatalf("entry POS not exposed: pos=%q pos_name=%q", resp.POS, resp.POSName)
+	}
 	if resp.CEFRLevel != 2 || resp.CEFRLevelName != "A2" || resp.CEFRSource != model.CEFRSourceOxford || resp.CEFRRunID == nil || *resp.CEFRRunID != 91 {
 		t.Fatalf("entry learning signal not exposed: %#v", resp.WordAnnotations)
+	}
+	if resp.SchoolLevel != 2 || resp.SchoolLevelName != "高中" || resp.SchoolRunID == nil || *resp.SchoolRunID != 99 {
+		t.Fatalf("school learning signal not exposed: %#v", resp.WordAnnotations)
 	}
 	if len(resp.CEFRSourceSignals) != 1 || resp.CEFRSourceSignals[0].Source != model.CEFRSourceCEFRJ || resp.CEFRSourceSignals[0].LevelName != "B1" {
 		t.Fatalf("entry CEFR source signals not exposed: %#v", resp.CEFRSourceSignals)
@@ -1398,14 +1500,149 @@ func TestGetWordByHeadword_ExposesCommonsV1Data(t *testing.T) {
 	if len(sense.CEFRSourceSignals) != 1 || sense.CEFRSourceSignals[0].Source != model.CEFRSourceOctanove {
 		t.Fatalf("sense CEFR source signals not exposed: %#v", sense.CEFRSourceSignals)
 	}
-	if len(sense.LexicalRelations) != 1 || sense.LexicalRelations[0].TargetText != "study" {
-		t.Fatalf("sense lexical relations not exposed: %#v", sense.LexicalRelations)
-	}
-	if len(resp.LexicalRelations) != 1 || resp.LexicalRelations[0].TargetText != "learner" {
-		t.Fatalf("entry lexical relations not exposed: %#v", resp.LexicalRelations)
-	}
 	if len(resp.Variants) != 1 || resp.Variants[0].DisplayOrder != 1 {
 		t.Fatalf("entry forms not exposed: %#v", resp.Variants)
+	}
+	if len(resp.EntryDefinitions) != 1 || resp.EntryDefinitions[0].Source != "school" || resp.EntryDefinitions[0].TextZHHans != "学习" {
+		t.Fatalf("entry definitions not exposed: %#v", resp.EntryDefinitions)
+	}
+	if len(resp.EntryExamples) != 1 || resp.EntryExamples[0].Source != "school" || resp.EntryExamples[0].SentenceZHHans == nil {
+		t.Fatalf("entry examples not exposed: %#v", resp.EntryExamples)
+	}
+}
+
+func TestGetEntryGroupByHeadword_ReturnsAllEntriesAndRelationGroupsByPOS(t *testing.T) {
+	relationCalls := make([]int, 0)
+	service := NewWordService(&mockRepository{
+		getEntryGroupByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, *repository.WordVariant, error) {
+			if headword != "head" {
+				t.Fatalf("unexpected headword %q", headword)
+			}
+			return []repository.Word{
+				{ID: 1, Headword: "head", NormalizedHeadword: "head", Pos: model.POSNoun, LearningSignal: &model.EntryLearningSignal{FrequencyRank: 10, SchoolLevel: model.SchoolLevelMiddleSchool, SchoolRunID: int64Ptr(10)}},
+				{ID: 2, Headword: "head", NormalizedHeadword: "head", Pos: model.POSVerb, LearningSignal: &model.EntryLearningSignal{FrequencyRank: 20}},
+				{ID: 3, Headword: "head", NormalizedHeadword: "head", Pos: model.POSAdjective, LearningSignal: &model.EntryLearningSignal{FrequencyRank: 30}},
+			}, nil, nil
+		},
+		getHeadwordRelationGroupsFunc: func(_ context.Context, normalizedHeadword string, posCode int, opts repository.RelationQueryOptions) ([]repository.HeadwordRelationGroup, error) {
+			relationCalls = append(relationCalls, posCode)
+			if normalizedHeadword != "head" {
+				t.Fatalf("unexpected normalized headword %q", normalizedHeadword)
+			}
+			switch posCode {
+			case model.HeadwordRelationPOSCodeNoun:
+				return []repository.HeadwordRelationGroup{{
+					RelationType: model.RelationTypeSynonym,
+					Items: []repository.HeadwordRelationItem{{
+						TargetHeadword:           "chief",
+						TargetHeadwordNormalized: "chief",
+						TargetPOSCode:            model.HeadwordRelationPOSCodeNoun,
+						SourceRelationType:       model.OEWNSourceRelationMembers,
+						SourceSynsetID:           "oewn-head-n-1",
+						TargetSynsetID:           "oewn-chief-n-1",
+						EvidenceCount:            2,
+						HasTargetEntry:           true,
+					}},
+				}}, nil
+			case model.HeadwordRelationPOSCodeVerb:
+				return []repository.HeadwordRelationGroup{{
+					RelationType: model.RelationTypeAntonym,
+					Items: []repository.HeadwordRelationItem{{
+						TargetHeadword:           "follow",
+						TargetHeadwordNormalized: "follow",
+						TargetPOSCode:            model.HeadwordRelationPOSCodeVerb,
+						SourceRelationType:       model.OEWNSourceRelationAntonym,
+						EvidenceCount:            1,
+						HasTargetEntry:           true,
+					}},
+				}}, nil
+			default:
+				return []repository.HeadwordRelationGroup{}, nil
+			}
+		},
+	}, createTestConfig())
+
+	resp, err := service.GetEntryGroupByHeadword(context.Background(), "head", EntryGroupOptions{})
+	if err != nil {
+		t.Fatalf("GetEntryGroupByHeadword() error = %v", err)
+	}
+	if len(resp.Entries) != 3 {
+		t.Fatalf("entries len = %d, want 3", len(resp.Entries))
+	}
+	if got, want := []string{resp.Entries[0].Headword, resp.Entries[1].Headword, resp.Entries[2].Headword}, []string{"head", "head", "head"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entry headwords = %v, want %v", got, want)
+	}
+	if resp.Entries[0].SchoolLevel != 1 || resp.Entries[0].SchoolLevelName != "初中" || resp.Entries[0].SchoolRunID == nil || *resp.Entries[0].SchoolRunID != 10 {
+		t.Fatalf("entry group school signal = %#v", resp.Entries[0].WordAnnotations)
+	}
+	if got, want := []string{resp.Entries[0].POS, resp.Entries[1].POS, resp.Entries[2].POS}, []string{model.POSNoun, model.POSVerb, model.POSAdjective}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entry group POS codes = %v, want %v", got, want)
+	}
+	if got, want := []string{resp.Entries[0].POSName, resp.Entries[1].POSName, resp.Entries[2].POSName}, []string{"Noun", "Verb", "Adjective"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entry group POS names = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(relationCalls, []int{model.HeadwordRelationPOSCodeNoun, model.HeadwordRelationPOSCodeVerb, model.HeadwordRelationPOSCodeAdjective}) {
+		t.Fatalf("relation POS calls = %v", relationCalls)
+	}
+	if len(resp.RelationGroupsByPOS) != 2 {
+		t.Fatalf("relation_groups_by_pos len = %d, want 2: %#v", len(resp.RelationGroupsByPOS), resp.RelationGroupsByPOS)
+	}
+	nounGroups := resp.RelationGroupsByPOS[0]
+	if nounGroups.POSCode != model.HeadwordRelationPOSCodeNoun || nounGroups.POSName != "Noun" {
+		t.Fatalf("noun POS group = %#v", nounGroups)
+	}
+	if len(nounGroups.Groups) != 1 || nounGroups.Groups[0].RelationName != "Synonym" {
+		t.Fatalf("noun relation groups = %#v", nounGroups.Groups)
+	}
+	if item := nounGroups.Groups[0].Items[0]; item.TargetHeadword != "chief" || item.TargetPOSName != "Noun" || item.EvidenceCount != 2 || !item.HasTargetEntry {
+		t.Fatalf("noun relation item = %#v", item)
+	}
+}
+
+func TestGetEntryGroupByHeadword_ExposesQueriedVariantAtGroupLevel(t *testing.T) {
+	service := NewWordService(&mockRepository{
+		getEntryGroupByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) ([]repository.Word, *repository.WordVariant, error) {
+			return []repository.Word{{
+					ID:                 10,
+					Headword:           "head",
+					NormalizedHeadword: "head",
+					Pos:                model.POSVerb,
+				}}, &repository.WordVariant{
+					WordID:          10,
+					FormText:        "heads",
+					RelationKind:    model.RelationKindForm,
+					FormType:        stringPtr("third_person_singular"),
+					SourceRelations: pq.StringArray{"form_of"},
+				}, nil
+		},
+	}, createTestConfig())
+
+	disableRelations := false
+	resp, err := service.GetEntryGroupByHeadword(context.Background(), "heads", EntryGroupOptions{IncludeRelations: &disableRelations})
+	if err != nil {
+		t.Fatalf("GetEntryGroupByHeadword() error = %v", err)
+	}
+	if resp.QueriedVariant == nil || resp.QueriedVariant.FormText != "heads" || resp.QueriedVariant.FormType != "third_person_singular" {
+		t.Fatalf("queried variant = %#v", resp.QueriedVariant)
+	}
+	if len(resp.Entries) != 1 || resp.Entries[0].QueriedVariant != nil {
+		t.Fatalf("entries should not carry group-level queried variant: %#v", resp.Entries)
+	}
+}
+
+func TestGetWordByHeadword_DoesNotLoadRelationGroups(t *testing.T) {
+	service := NewWordService(&mockRepository{
+		getWordByHeadwordFunc: func(_ context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) (*repository.Word, *repository.WordVariant, error) {
+			return &repository.Word{ID: 1, Headword: headword, Pos: model.POSVerb}, nil, nil
+		},
+		getHeadwordRelationGroupsFunc: func(_ context.Context, normalizedHeadword string, posCode int, opts repository.RelationQueryOptions) ([]repository.HeadwordRelationGroup, error) {
+			t.Fatalf("GetWordByHeadword should not query headword relation groups")
+			return nil, nil
+		},
+	}, createTestConfig())
+
+	if _, err := service.GetWordByHeadword(context.Background(), "learn", nil, false, false, true); err != nil {
+		t.Fatalf("GetWordByHeadword() error = %v", err)
 	}
 }
 
@@ -1627,7 +1864,7 @@ func TestSearchWords_KeywordLengthValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := service.SearchWords(context.Background(), tt.keyword, nil, nil, nil, nil, nil, nil, 10, 0)
+			_, _, err := service.SearchWords(context.Background(), tt.keyword, SearchOptions{Limit: 10})
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for keyword %q, got nil", tt.keyword)
@@ -1692,7 +1929,7 @@ func TestSuggestWords_PrefixLengthValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := service.SuggestWords(context.Background(), tt.prefix, nil, nil, nil, nil, nil, 10)
+			_, err := service.SuggestWords(context.Background(), tt.prefix, SuggestOptions{Limit: 10})
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for prefix %q, got nil", tt.prefix)

@@ -139,40 +139,40 @@ func BenchmarkReadOnlyRepositoryQueries(b *testing.B) {
 			return err
 		})
 	})
-	b.Run("ListFeaturedCandidateHeadwords", func(b *testing.B) {
+	b.Run("ListFeaturedCandidates", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, err := perfDB.repo.ListFeaturedCandidateHeadwords(ctx)
+			_, err := perfDB.repo.ListFeaturedCandidates(ctx)
 			return err
 		})
 	})
 	b.Run("SearchWords_Basic", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, nil, nil, nil, nil, nil, nil, 20, 0)
+			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, repository.SearchOptions{Limit: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_WithPOS", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, &sample.POS, nil, nil, nil, nil, nil, 20, 0)
+			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, repository.SearchOptions{POS: &sample.POS, Limit: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_WithLearningFilters", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, nil, &sample.LearningCEFRLevel, nil, nil, &sample.MaxFrequencyRank, &sample.MinCollinsStars, 20, 0)
+			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, repository.SearchOptions{CEFRLevel: &sample.LearningCEFRLevel, MaxFrequencyRank: &sample.MaxFrequencyRank, MinCollinsStars: &sample.MinCollinsStars, Limit: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_MaxFrequencyRank", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, nil, nil, nil, nil, &sample.MaxFrequencyRank, nil, 20, 0)
+			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, repository.SearchOptions{MaxFrequencyRank: &sample.MaxFrequencyRank, Limit: 20})
 			return err
 		})
 	})
 	if sample.OxfordLevel > 0 {
 		b.Run("SearchWords_OxfordLevel", func(b *testing.B) {
 			benchmarkReadOnlyQuery(b, func() error {
-				_, _, err := perfDB.repo.SearchWords(ctx, sample.OxfordKeyword, nil, nil, &sample.OxfordLevel, nil, nil, nil, 20, 0)
+				_, _, err := perfDB.repo.SearchWords(ctx, sample.OxfordKeyword, repository.SearchOptions{OxfordLevel: &sample.OxfordLevel, Limit: 20})
 				return err
 			})
 		})
@@ -180,7 +180,7 @@ func BenchmarkReadOnlyRepositoryQueries(b *testing.B) {
 	if sample.CETLevel > 0 {
 		b.Run("SearchWords_CETLevel", func(b *testing.B) {
 			benchmarkReadOnlyQuery(b, func() error {
-				_, _, err := perfDB.repo.SearchWords(ctx, sample.CETKeyword, nil, nil, nil, &sample.CETLevel, nil, nil, 20, 0)
+				_, _, err := perfDB.repo.SearchWords(ctx, sample.CETKeyword, repository.SearchOptions{CETLevel: &sample.CETLevel, Limit: 20})
 				return err
 			})
 		})
@@ -188,51 +188,51 @@ func BenchmarkReadOnlyRepositoryQueries(b *testing.B) {
 	if sample.CollinsStars > 0 {
 		b.Run("SearchWords_CollinsStars", func(b *testing.B) {
 			benchmarkReadOnlyQuery(b, func() error {
-				_, _, err := perfDB.repo.SearchWords(ctx, sample.CollinsKeyword, nil, nil, nil, nil, nil, &sample.CollinsStars, 20, 0)
+				_, _, err := perfDB.repo.SearchWords(ctx, sample.CollinsKeyword, repository.SearchOptions{MinCollinsStars: &sample.CollinsStars, Limit: 20})
 				return err
 			})
 		})
 	}
 	b.Run("SearchWords_FormOnlyMatch", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.repo.SearchWords(ctx, sample.FormSearchKeyword, nil, nil, nil, nil, nil, nil, 20, 0)
+			_, _, err := perfDB.repo.SearchWords(ctx, sample.FormSearchKeyword, repository.SearchOptions{Limit: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_Offset", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, nil, nil, nil, nil, nil, nil, 20, 20)
+			_, _, err := perfDB.repo.SearchWords(ctx, sample.SearchKeyword, repository.SearchOptions{Limit: 20, Offset: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_NoResult", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.repo.SearchWords(ctx, sample.NoMatchKeyword, nil, nil, nil, nil, nil, nil, 20, 0)
+			_, _, err := perfDB.repo.SearchWords(ctx, sample.NoMatchKeyword, repository.SearchOptions{Limit: 20})
 			return err
 		})
 	})
 	b.Run("SuggestWords_Basic", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, err := perfDB.repo.SuggestWords(ctx, sample.SuggestPrefix, nil, nil, nil, nil, nil, 20)
+			_, err := perfDB.repo.SuggestWords(ctx, sample.SuggestPrefix, repository.SuggestOptions{Limit: 20})
 			return err
 		})
 	})
 	b.Run("SuggestWords_WithLearningFilters", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, err := perfDB.repo.SuggestWords(ctx, sample.SuggestPrefix, &sample.LearningCEFRLevel, nil, nil, &sample.MaxFrequencyRank, &sample.MinCollinsStars, 20)
+			_, err := perfDB.repo.SuggestWords(ctx, sample.SuggestPrefix, repository.SuggestOptions{CEFRLevel: &sample.LearningCEFRLevel, MaxFrequencyRank: &sample.MaxFrequencyRank, MinCollinsStars: &sample.MinCollinsStars, Limit: 20})
 			return err
 		})
 	})
 	b.Run("SuggestWords_FormOnlyMatch", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, err := perfDB.repo.SuggestWords(ctx, sample.FormSuggestPrefix, nil, nil, nil, nil, nil, 20)
+			_, err := perfDB.repo.SuggestWords(ctx, sample.FormSuggestPrefix, repository.SuggestOptions{Limit: 20})
 			return err
 		})
 	})
 	if sample.OxfordLevel > 0 {
 		b.Run("SuggestWords_OxfordLevel", func(b *testing.B) {
 			benchmarkReadOnlyQuery(b, func() error {
-				_, err := perfDB.repo.SuggestWords(ctx, firstRunes(sample.OxfordKeyword, 3), nil, &sample.OxfordLevel, nil, nil, nil, 20)
+				_, err := perfDB.repo.SuggestWords(ctx, firstRunes(sample.OxfordKeyword, 3), repository.SuggestOptions{OxfordLevel: &sample.OxfordLevel, Limit: 20})
 				return err
 			})
 		})
@@ -240,7 +240,7 @@ func BenchmarkReadOnlyRepositoryQueries(b *testing.B) {
 	if sample.CETLevel > 0 {
 		b.Run("SuggestWords_CETLevel", func(b *testing.B) {
 			benchmarkReadOnlyQuery(b, func() error {
-				_, err := perfDB.repo.SuggestWords(ctx, firstRunes(sample.CETKeyword, 3), nil, nil, &sample.CETLevel, nil, nil, 20)
+				_, err := perfDB.repo.SuggestWords(ctx, firstRunes(sample.CETKeyword, 3), repository.SuggestOptions{CETLevel: &sample.CETLevel, Limit: 20})
 				return err
 			})
 		})
@@ -248,7 +248,7 @@ func BenchmarkReadOnlyRepositoryQueries(b *testing.B) {
 	if sample.CollinsStars > 0 {
 		b.Run("SuggestWords_CollinsStars", func(b *testing.B) {
 			benchmarkReadOnlyQuery(b, func() error {
-				_, err := perfDB.repo.SuggestWords(ctx, firstRunes(sample.CollinsKeyword, 3), nil, nil, nil, nil, &sample.CollinsStars, 20)
+				_, err := perfDB.repo.SuggestWords(ctx, firstRunes(sample.CollinsKeyword, 3), repository.SuggestOptions{MinCollinsStars: &sample.CollinsStars, Limit: 20})
 				return err
 			})
 		})
@@ -361,43 +361,43 @@ func BenchmarkReadOnlyServiceQueries(b *testing.B) {
 	})
 	b.Run("SearchWords", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.svc.SearchWords(ctx, sample.SearchKeyword, nil, nil, nil, nil, nil, nil, 20, 0)
+			_, _, err := perfDB.svc.SearchWords(ctx, sample.SearchKeyword, service.SearchOptions{Limit: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_WithLearningFilters", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.svc.SearchWords(ctx, sample.SearchKeyword, nil, &sample.LearningCEFRLevel, nil, nil, &sample.MaxFrequencyRank, &sample.MinCollinsStars, 20, 0)
+			_, _, err := perfDB.svc.SearchWords(ctx, sample.SearchKeyword, service.SearchOptions{CEFRLevel: &sample.LearningCEFRLevel, MaxFrequencyRank: &sample.MaxFrequencyRank, MinCollinsStars: &sample.MinCollinsStars, Limit: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_FormOnlyMatch", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.svc.SearchWords(ctx, sample.FormSearchKeyword, nil, nil, nil, nil, nil, nil, 20, 0)
+			_, _, err := perfDB.svc.SearchWords(ctx, sample.FormSearchKeyword, service.SearchOptions{Limit: 20})
 			return err
 		})
 	})
 	b.Run("SearchWords_Offset", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, _, err := perfDB.svc.SearchWords(ctx, sample.SearchKeyword, nil, nil, nil, nil, nil, nil, 20, 20)
+			_, _, err := perfDB.svc.SearchWords(ctx, sample.SearchKeyword, service.SearchOptions{Limit: 20, Offset: 20})
 			return err
 		})
 	})
 	b.Run("SuggestWords", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, err := perfDB.svc.SuggestWords(ctx, sample.SuggestPrefix, nil, nil, nil, nil, nil, 20)
+			_, err := perfDB.svc.SuggestWords(ctx, sample.SuggestPrefix, service.SuggestOptions{Limit: 20})
 			return err
 		})
 	})
 	b.Run("SuggestWords_WithLearningFilters", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, err := perfDB.svc.SuggestWords(ctx, sample.SuggestPrefix, &sample.LearningCEFRLevel, nil, nil, &sample.MaxFrequencyRank, &sample.MinCollinsStars, 20)
+			_, err := perfDB.svc.SuggestWords(ctx, sample.SuggestPrefix, service.SuggestOptions{CEFRLevel: &sample.LearningCEFRLevel, MaxFrequencyRank: &sample.MaxFrequencyRank, MinCollinsStars: &sample.MinCollinsStars, Limit: 20})
 			return err
 		})
 	})
 	b.Run("SuggestWords_FormOnlyMatch", func(b *testing.B) {
 		benchmarkReadOnlyQuery(b, func() error {
-			_, err := perfDB.svc.SuggestWords(ctx, sample.FormSuggestPrefix, nil, nil, nil, nil, nil, 20)
+			_, err := perfDB.svc.SuggestWords(ctx, sample.FormSuggestPrefix, service.SuggestOptions{Limit: 20})
 			return err
 		})
 	})
