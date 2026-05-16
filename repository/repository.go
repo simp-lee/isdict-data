@@ -169,10 +169,11 @@ type suggestionResultID struct {
 }
 
 type preloadOptions struct {
-	variants       bool
-	pronunciations bool
-	senses         bool
-	entryDetails   bool
+	variants            bool
+	pronunciations      bool
+	senses              bool
+	entryDetails        bool
+	translationFallback bool
 }
 
 type learnerSignalColumns struct {
@@ -226,6 +227,13 @@ func (r *Repository) applyPreloads(query *gorm.DB, opts preloadOptions) *gorm.DB
 				return db.Order("example_order ASC, source ASC, id ASC")
 			})
 	}
+	if opts.translationFallback && !opts.entryDetails {
+		query = query.Preload("EntryDefinitions", func(db *gorm.DB) *gorm.DB {
+			return db.
+				Where("source = ? AND TRIM(text_zh_hans) <> ''", "school").
+				Order("definition_order ASC, source ASC, id ASC")
+		})
+	}
 
 	if opts.pronunciations {
 		query = query.
@@ -253,6 +261,16 @@ func (r *Repository) applyPreloads(query *gorm.DB, opts preloadOptions) *gorm.DB
 			}).
 			Preload("Senses.Examples", func(db *gorm.DB) *gorm.DB {
 				return db.Order("example_order ASC, id ASC")
+			}).
+			Preload("Senses", func(db *gorm.DB) *gorm.DB {
+				return db.Order("sense_order ASC, id ASC")
+			})
+	} else if opts.translationFallback {
+		query = query.
+			Preload("Senses.GlossesZH", func(db *gorm.DB) *gorm.DB {
+				return db.
+					Where("TRIM(text_zh_hans) <> ''").
+					Order("is_primary DESC, gloss_order ASC, source ASC, id ASC")
 			}).
 			Preload("Senses", func(db *gorm.DB) *gorm.DB {
 				return db.Order("sense_order ASC, id ASC")
@@ -406,9 +424,10 @@ func (r *Repository) GetWordByHeadword(ctx context.Context, headword string, inc
 	return &loaded[0], &variant, nil
 }
 
-// GetEntryGroupByHeadword resolves all entries under the same normalized
-// headword. If the input is an entry form or alias, the group for its canonical
-// entry headword is returned and the selected form is exposed as queriedVariant.
+// GetEntryGroupByHeadword resolves the canonical headword for the input, then
+// returns only entries whose headword exactly matches that canonical headword.
+// If the input is an entry form or alias, the group for its canonical entry
+// headword is returned and the selected form is exposed as queriedVariant.
 func (r *Repository) GetEntryGroupByHeadword(ctx context.Context, headword string, includeVariants, includePronunciations, includeSenses bool) ([]Word, *WordVariant, error) {
 	normalizedHeadword := norm.NormalizeHeadword(headword)
 	db, err := r.dbWithContext(ctx)
@@ -416,11 +435,18 @@ func (r *Repository) GetEntryGroupByHeadword(ctx context.Context, headword strin
 		return nil, nil, err
 	}
 
-	words, err := r.loadWordsByNormalizedHeadword(db, normalizedHeadword, includeVariants, includePronunciations, includeSenses)
+	candidates, err := r.loadHeadwordCandidatesByNormalized(db, normalizedHeadword)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(words) > 0 {
+	if canonicalHeadword, ok := selectCanonicalHeadword(candidates, headword); ok {
+		words, err := r.loadWordsByHeadword(db, canonicalHeadword, includeVariants, includePronunciations, includeSenses)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(words) == 0 {
+			return nil, nil, ErrWordNotFound
+		}
 		return words, nil, nil
 	}
 
@@ -429,15 +455,19 @@ func (r *Repository) GetEntryGroupByHeadword(ctx context.Context, headword strin
 		return nil, nil, err
 	}
 
-	selected, err := r.loadWordsByIDs(db, []int64{variant.WordID}, false, false, false)
+	var selected Word
+	err = db.Select("id", "headword").First(&selected, "id = ?", variant.WordID).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrWordNotFound
+		}
 		return nil, nil, err
 	}
-	if len(selected) == 0 || selected[0].NormalizedHeadword == "" {
+	if strings.TrimSpace(selected.Headword) == "" {
 		return nil, nil, ErrWordNotFound
 	}
 
-	words, err = r.loadWordsByNormalizedHeadword(db, selected[0].NormalizedHeadword, includeVariants, includePronunciations, includeSenses)
+	words, err := r.loadWordsByHeadword(db, selected.Headword, includeVariants, includePronunciations, includeSenses)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -558,7 +588,7 @@ func (r *Repository) GetWordsByHeadwords(ctx context.Context, headwords []string
 	return words, nil
 }
 
-func (r *Repository) loadWordsByNormalizedHeadword(db *gorm.DB, normalizedHeadword string, includeVariants, includePronunciations, includeSenses bool) ([]Word, error) {
+func (r *Repository) loadHeadwordCandidatesByNormalized(db *gorm.DB, normalizedHeadword string) ([]Word, error) {
 	if strings.TrimSpace(normalizedHeadword) == "" {
 		return []Word{}, nil
 	}
@@ -567,11 +597,40 @@ func (r *Repository) loadWordsByNormalizedHeadword(db *gorm.DB, normalizedHeadwo
 	query := db.Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
 		Where("entries.normalized_headword = ?", normalizedHeadword).
 		Order(entryGroupOrder("entries", "els"))
+	if err := query.Find(&words).Error; err != nil {
+		return nil, err
+	}
+	return words, nil
+}
+
+func (r *Repository) loadWordsByHeadword(db *gorm.DB, headword string, includeVariants, includePronunciations, includeSenses bool) ([]Word, error) {
+	if strings.TrimSpace(headword) == "" {
+		return []Word{}, nil
+	}
+
+	var words []Word
+	query := db.Joins("LEFT JOIN entry_learning_signals els ON els.entry_id = entries.id").
+		Where("entries.headword = ?", headword).
+		Order(entryGroupOrder("entries", "els"))
 	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
 	if err := query.Find(&words).Error; err != nil {
 		return nil, err
 	}
 	return words, nil
+}
+
+func selectCanonicalHeadword(candidates []Word, input string) (string, bool) {
+	if len(candidates) == 0 {
+		return "", false
+	}
+
+	trimmedInput := strings.TrimSpace(input)
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.Headword) == trimmedInput {
+			return candidate.Headword, true
+		}
+	}
+	return candidates[0].Headword, true
 }
 
 func (r *Repository) findBestVariant(db *gorm.DB, normalizedForm, originalForm string) (WordVariant, error) {
@@ -597,13 +656,21 @@ func (r *Repository) findBestVariant(db *gorm.DB, normalizedForm, originalForm s
 }
 
 func (r *Repository) loadWordsByIDs(db *gorm.DB, wordIDs []int64, includeVariants, includePronunciations, includeSenses bool) ([]Word, error) {
+	return r.loadWordsByIDsWithOptions(db, wordIDs, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
+}
+
+func (r *Repository) loadWordsByIDsWithTranslationFallback(db *gorm.DB, wordIDs []int64) ([]Word, error) {
+	return r.loadWordsByIDsWithOptions(db, wordIDs, preloadOptions{translationFallback: true})
+}
+
+func (r *Repository) loadWordsByIDsWithOptions(db *gorm.DB, wordIDs []int64, opts preloadOptions) ([]Word, error) {
 	if len(wordIDs) == 0 {
 		return []Word{}, nil
 	}
 
 	var words []Word
 	query := db.Where("id IN ?", wordIDs)
-	query = r.applyPreloads(query, newPreloadOptions(includeVariants, includePronunciations, includeSenses))
+	query = r.applyPreloads(query, opts)
 	if err := query.Find(&words).Error; err != nil {
 		return nil, err
 	}
@@ -964,7 +1031,7 @@ func (r *Repository) SearchWords(ctx context.Context, keyword string, opts Searc
 		wordIDs[i] = result.ID
 	}
 
-	words, err := r.loadWordsByIDs(db, wordIDs, false, false, false)
+	words, err := r.loadWordsByIDsWithTranslationFallback(db, wordIDs)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1153,7 +1220,7 @@ func (r *Repository) loadSuggestionResults(db *gorm.DB, results []suggestionResu
 	for i, result := range results {
 		wordIDs[i] = result.ID
 	}
-	return r.loadWordsByIDs(db, wordIDs, false, false, false)
+	return r.loadWordsByIDsWithTranslationFallback(db, wordIDs)
 }
 
 // SearchPhrases searches for multiword entries containing the keyword.
@@ -1182,7 +1249,7 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 	}
 
 	unionSQL := fmt.Sprintf(`
-	WITH ranked AS (
+	WITH entry_ranked AS (
 		SELECT
 			t.entry_id AS id,
 			t.entry_id AS id_ord,
@@ -1213,7 +1280,7 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 					END,
 					t.entry_id,
 					t.headword
-			) AS rn
+			) AS entry_rn
 		FROM entry_search_terms t
 		WHERE t.is_multiword = true
 			AND t.normalized_term LIKE ?
@@ -1223,10 +1290,33 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 				OR LOWER(t.term_text) LIKE ?
 				OR LOWER(t.term_text) LIKE ?
 			)
+	),
+	headword_ranked AS (
+		SELECT
+			id,
+			priority,
+			freq_rank,
+			school_rank,
+			cefr_level,
+			oxford_level,
+			cet_level,
+			collins_stars,
+			id_ord,
+			headword,
+			ROW_NUMBER() OVER (
+				PARTITION BY headword
+				ORDER BY
+					%s,
+					priority,
+					id_ord,
+					headword
+			) AS headword_rn
+		FROM entry_ranked
+		WHERE entry_rn = 1
 	)
 	SELECT id, priority, freq_rank, school_rank, cefr_level, oxford_level, cet_level, collins_stars, id_ord, headword
-	FROM ranked
-	WHERE rn = 1
+	FROM headword_ranked
+	WHERE headword_rn = 1
 	ORDER BY
 		%s,
 		priority,
@@ -1235,6 +1325,7 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 	LIMIT ?
 	`,
 		learnerSignalOrder("t"),
+		learnerSignalOrderForColumns(rankedLearnerSignalColumns()),
 		learnerSignalOrderForColumns(rankedLearnerSignalColumns()),
 	)
 
@@ -1272,7 +1363,7 @@ func (r *Repository) SearchPhrases(ctx context.Context, keyword string, limit in
 		wordIDs = append(wordIDs, row.ID)
 	}
 
-	return r.loadWordsByIDs(db, wordIDs, false, false, false)
+	return r.loadWordsByIDsWithTranslationFallback(db, wordIDs)
 }
 
 // GetPronunciationsByWordID retrieves pronunciations for an entry.

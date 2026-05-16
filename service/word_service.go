@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -582,7 +583,7 @@ func (s *WordService) relationGroupsByPOS(ctx context.Context, normalizedHeadwor
 }
 
 func wordAnnotations(word repository.Word) WordAnnotations {
-	annotations := WordAnnotations{TranslationZH: translationZH(word.SummariesZH)}
+	annotations := WordAnnotations{TranslationZH: translationZH(word)}
 	if signal := word.LearningSignal; signal != nil {
 		annotations.CEFRLevel = int(signal.CEFRLevel)
 		annotations.CEFRLevelName = cefrLevelName(int(signal.CEFRLevel))
@@ -605,11 +606,84 @@ func wordAnnotations(word repository.Word) WordAnnotations {
 	return annotations
 }
 
-func translationZH(summaries []model.EntrySummaryZH) string {
-	if len(summaries) == 0 {
+func translationZH(word repository.Word) string {
+	if summary := summaryTranslationZH(word.SummariesZH); summary != "" {
+		return summary
+	}
+	if definition := schoolDefinitionTranslationZH(word.EntryDefinitions); definition != "" {
+		return definition
+	}
+	return senseGlossTranslationZH(word.Senses)
+}
+
+func summaryTranslationZH(summaries []model.EntrySummaryZH) string {
+	for _, summary := range summaries {
+		if strings.TrimSpace(summary.SummaryText) != "" {
+			return summary.SummaryText
+		}
+	}
+	return ""
+}
+
+func schoolDefinitionTranslationZH(definitions []model.EntryDefinition) string {
+	candidates := make([]model.EntryDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Source != "school" || strings.TrimSpace(definition.TextZHHans) == "" {
+			continue
+		}
+		candidates = append(candidates, definition)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if left.DefinitionOrder != right.DefinitionOrder {
+			return left.DefinitionOrder < right.DefinitionOrder
+		}
+		if left.Source != right.Source {
+			return left.Source < right.Source
+		}
+		return left.ID < right.ID
+	})
+	if len(candidates) == 0 {
 		return ""
 	}
-	return summaries[0].SummaryText
+	return candidates[0].TextZHHans
+}
+
+func senseGlossTranslationZH(senses []repository.Sense) string {
+	orderedSenses := append([]repository.Sense(nil), senses...)
+	sort.SliceStable(orderedSenses, func(i, j int) bool {
+		left, right := orderedSenses[i], orderedSenses[j]
+		if left.SenseOrder != right.SenseOrder {
+			return left.SenseOrder < right.SenseOrder
+		}
+		return left.ID < right.ID
+	})
+
+	for _, sense := range orderedSenses {
+		glosses := make([]model.SenseGlossZH, 0, len(sense.GlossesZH))
+		for _, gloss := range sense.GlossesZH {
+			if strings.TrimSpace(gloss.TextZHHans) != "" {
+				glosses = append(glosses, gloss)
+			}
+		}
+		sort.SliceStable(glosses, func(i, j int) bool {
+			left, right := glosses[i], glosses[j]
+			if left.IsPrimary != right.IsPrimary {
+				return left.IsPrimary
+			}
+			if left.GlossOrder != right.GlossOrder {
+				return left.GlossOrder < right.GlossOrder
+			}
+			if left.Source != right.Source {
+				return left.Source < right.Source
+			}
+			return left.ID < right.ID
+		})
+		if len(glosses) > 0 {
+			return glosses[0].TextZHHans
+		}
+	}
+	return ""
 }
 
 func (s *WordService) convertPronunciations(pronunciations []repository.Pronunciation, accentCode *string) []PronunciationResponse {

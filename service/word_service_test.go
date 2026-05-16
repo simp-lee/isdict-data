@@ -1079,6 +1079,99 @@ func TestSearchPhrases_MapsCEFRLevel(t *testing.T) {
 	}
 }
 
+func TestSearchPhrases_TranslationZHFallback(t *testing.T) {
+	words := []repository.Word{
+		{
+			Headword:    "summary phrase",
+			SummariesZH: []model.EntrySummaryZH{{SummaryText: "摘要释义"}},
+			EntryDefinitions: []model.EntryDefinition{
+				{ID: 1, Source: "school", DefinitionOrder: 1, TextZHHans: "教材释义"},
+			},
+			Senses: []repository.Sense{{
+				ID:         1,
+				SenseOrder: 1,
+				GlossesZH:  []model.SenseGlossZH{{ID: 1, GlossOrder: 1, TextZHHans: "义项释义", IsPrimary: true}},
+			}},
+		},
+		{
+			Headword: "school phrase",
+			EntryDefinitions: []model.EntryDefinition{
+				{ID: 3, Source: "school", DefinitionOrder: 2, TextZHHans: "后置教材释义"},
+				{ID: 2, Source: "school", DefinitionOrder: 1, TextZHHans: "教材释义"},
+			},
+			Senses: []repository.Sense{{
+				ID:         2,
+				SenseOrder: 1,
+				GlossesZH:  []model.SenseGlossZH{{ID: 2, GlossOrder: 1, TextZHHans: "义项释义", IsPrimary: true}},
+			}},
+		},
+		{
+			Headword: "sense phrase",
+			EntryDefinitions: []model.EntryDefinition{
+				{ID: 4, Source: "school", DefinitionOrder: 1, TextZHHans: ""},
+				{ID: 5, Source: "manual", DefinitionOrder: 1, TextZHHans: "非教材释义"},
+			},
+			Senses: []repository.Sense{
+				{
+					ID:         4,
+					SenseOrder: 2,
+					GlossesZH:  []model.SenseGlossZH{{ID: 7, GlossOrder: 1, TextZHHans: "第二义项释义", IsPrimary: true}},
+				},
+				{
+					ID:         3,
+					SenseOrder: 1,
+					GlossesZH: []model.SenseGlossZH{
+						{ID: 6, Source: "b", GlossOrder: 1, TextZHHans: "第一义项主释义", IsPrimary: true},
+						{ID: 5, Source: "a", GlossOrder: 1, TextZHHans: "第一义项普通释义", IsPrimary: false},
+					},
+				},
+			},
+		},
+		{
+			Headword: "definition before sense",
+			EntryDefinitions: []model.EntryDefinition{
+				{ID: 8, Source: "school", DefinitionOrder: 1, TextZHHans: "优先教材释义"},
+			},
+			Senses: []repository.Sense{{
+				ID:         5,
+				SenseOrder: 1,
+				GlossesZH:  []model.SenseGlossZH{{ID: 8, GlossOrder: 1, TextZHHans: "不应使用义项释义", IsPrimary: true}},
+			}},
+		},
+		{Headword: "empty phrase"},
+	}
+
+	service := NewWordService(&mockRepository{
+		searchPhrasesFunc: func(_ context.Context, keyword string, limit int) ([]repository.Word, error) {
+			if keyword != "phrase" || limit != 10 {
+				t.Fatalf("unexpected SearchPhrases args: keyword=%q limit=%d", keyword, limit)
+			}
+			return words, nil
+		},
+	}, createTestConfig())
+
+	results, err := service.SearchPhrases(context.Background(), "phrase", 10)
+	if err != nil {
+		t.Fatalf("SearchPhrases() error = %v", err)
+	}
+
+	want := map[string]string{
+		"summary phrase":          "摘要释义",
+		"school phrase":           "教材释义",
+		"sense phrase":            "第一义项主释义",
+		"definition before sense": "优先教材释义",
+		"empty phrase":            "",
+	}
+	if len(results) != len(want) {
+		t.Fatalf("results len = %d, want %d", len(results), len(want))
+	}
+	for _, result := range results {
+		if got := result.TranslationZH; got != want[result.Headword] {
+			t.Fatalf("%s TranslationZH = %q, want %q", result.Headword, got, want[result.Headword])
+		}
+	}
+}
+
 func TestGetWordByHeadword_MapsWordAndSenseCEFRLevels(t *testing.T) {
 	cfg := createTestConfig()
 
